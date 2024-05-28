@@ -11,3 +11,7 @@ in the IP packet to elicit an **ICMP Time to Live Exceeded** message from each r
 packet decreases the TTL field, which effectively acts as a Hop Counter. When a router receives an IP datagram with the
 TTL field set to 0, it responds with an ICMP Time to Live Exceeded that reveals its IP address. IP datagrams can be sent with TCP, UDP or with ICMP.
 ![traceroute.svg](traceroute.svg)
+
+## Main Libraries
+- [socket2](https://crates.io/crates/socket2) (includes raw sockets)
+- [libpacket](https://docs.rs/libpacket/latest/libpacket/)
