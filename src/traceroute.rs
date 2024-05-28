@@ -1,0 +1,537 @@
+use std::{sync, thread};
+use std::collections::{HashMap, HashSet};
+use std::fmt::{Display, Formatter};
+use std::hash::Hash;
+use std::mem::MaybeUninit;
+use std::net::{Ipv4Addr, Shutdown, SocketAddr};
+use std::str::FromStr;
+use std::sync::mpsc::{Receiver, Sender};
+use std::time::{Duration, Instant};
+
+use libpacket::FromPacket;
+use libpacket::icmp::{Icmp, IcmpPacket};
+use libpacket::ip::IpNextHeaderProtocol;
+use libpacket::ipv4::{Ipv4, Ipv4Packet};
+use libpacket::udp::{Udp, UdpPacket};
+use rand::Rng;
+use rand::rngs::ThreadRng;
+use socket2::{Domain, Protocol, SockAddr, Socket, Type};
+
+use TracerouteHopStatus::{Completed, NoReply, PartiallyCompleted};
+
+use crate::bytes::ToBytes;
+
+pub struct RandomUniquePort {
+    generated_ports: HashSet<u16>,
+    rng: ThreadRng
+}
+
+impl RandomUniquePort {
+    pub fn new() -> Self {
+        Self {
+            generated_ports: HashSet::with_capacity(10),
+            rng: rand::thread_rng()
+        }
+    }
+
+    pub fn generate_ports(&mut self, tot_ports: u16) -> HashSet<u16> {
+        let mut generated_ports = HashSet::with_capacity(tot_ports as usize);
+
+        for _ in 0..tot_ports {
+            let generated_port = self.generate_port();
+            generated_ports.insert(generated_port);
+        }
+
+        generated_ports
+    }
+
+    pub fn generate_port(&mut self) -> u16 {
+        let mut generated_port: u16 = 0;
+
+        let mut not_found = true;
+        while not_found {
+            generated_port = self.rng.gen_range(0..=65535);
+            not_found = self.generated_ports.contains(&generated_port);
+        }
+
+        self.generated_ports.insert(generated_port);
+        generated_port
+    }
+}
+
+pub struct TracerouteHop {
+    id: u16,
+    sent_at: Instant,
+    ports: HashSet<u16>
+}
+
+impl TracerouteHop {
+    pub fn new(id: u16, source_ports: HashSet<u16>) -> Self {
+        let tot_source_ports = source_ports.len();
+        if tot_source_ports == 0 {
+            panic!()
+        }
+
+        Self {
+            id,
+            sent_at: Instant::now(),
+            ports: source_ports
+        }
+    }
+
+    pub fn complete_query(&mut self, hop_response: TracerouteHopResponse) -> Option<TracerouteHopResult> {
+        if hop_response.id != self.id {
+            return None;
+        }
+
+        let hop_response_port = hop_response.port;
+        if !self.ports.contains(&hop_response_port) {
+            return None;
+        }
+
+        self.ports.remove(&hop_response_port);
+        Some(TracerouteHopResult { id: hop_response.id, address: hop_response.address, rtt: self.sent_at.elapsed() })
+    }
+}
+
+pub struct TracerouteDisplayableHop {
+    id: u16,
+    tot_queries: u16,
+    results: Vec<TracerouteHopResult>
+}
+
+impl TracerouteDisplayableHop {
+    pub fn new(id: u16, tot_queries: u16) -> Self {
+        Self {
+            id,
+            tot_queries,
+            results: Vec::with_capacity(tot_queries as usize)
+        }
+    }
+    
+    pub fn add_result(&mut self, hop_result: TracerouteHopResult) {
+        if self.results.len() as u16 == self.tot_queries {
+            panic!()
+        }
+        
+        self.results.push(hop_result);
+    }
+    
+    pub fn get_status(&self) -> TracerouteHopStatus {
+        let tot_results = self.results.len() as u16;
+        if tot_results == 0 {
+            NoReply
+        } else if tot_results == self.tot_queries {
+            Completed
+        } else {
+            PartiallyCompleted
+        }
+    }
+}
+
+impl Display for TracerouteDisplayableHop {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let hop_id = self.id;
+        write!(f, "{hop_id} - ")?;
+        match self.get_status() {
+            Completed | PartiallyCompleted => {
+                for hop_result in &self.results {
+                    let addr = hop_result.address;
+                    let rtt_ms = hop_result.rtt.as_secs_f64() * 1000f64;
+
+                    write!(f, "{addr} {:.5} ms | ", rtt_ms)?;
+                }
+                writeln!(f, "")?;
+            },
+            NoReply => {
+                writeln!(f, "* * * * *")?;
+            }
+        }
+        
+        Ok(())
+    }
+}
+
+pub enum TracerouteHopStatus {
+    Completed,
+    PartiallyCompleted,
+    NoReply
+}
+
+pub struct TracerouteHopResult {
+    pub id: u16,
+    pub address: Ipv4Addr,
+    pub rtt: Duration
+}
+
+pub struct TracerouteHopResponse {
+    pub id: u16,
+    pub address: Ipv4Addr,
+    pub port: u16,
+}
+
+pub struct Traceroute {
+    destination_address: Ipv4Addr,
+    hops: u16,
+    queries_per_hop: u16,
+    destination_port: u16,
+    channel: Sender<TracerouteHopResult>,
+    hops_by_id: HashMap<u16, TracerouteHop>,
+}
+
+impl Traceroute {
+    pub fn new(
+        destination_address: Ipv4Addr,
+        hops: u16,
+        queries_per_hop: u16,
+        initial_destination_port: u16,
+        channel: Sender<TracerouteHopResult>,
+    ) -> Self {
+        Self {
+            destination_address,
+            hops,
+            queries_per_hop,
+            destination_port: initial_destination_port,
+            channel,
+            hops_by_id: HashMap::with_capacity(hops as usize)
+        }
+    }
+
+    pub fn traceroute(mut self) {
+        let (sender, receiver) = sync::mpsc::channel();
+
+        thread::spawn(move || {
+            let mut icmp_receiver = TracerouteIcmpReceiver::new(sender, self.destination_address.clone());
+            icmp_receiver.capture();
+        });
+
+        let socket = self.build_socket();
+
+        for ttl in 1..=self.hops {
+            let ipv4_datagram = self.build_ipv4_datagram(ttl as u8);
+            let source_ports = self.generate_source_ports();
+            let traceroute_hop = TracerouteHop::new(ttl, source_ports.clone());
+            self.hops_by_id.insert(traceroute_hop.id, traceroute_hop);
+            
+            for source_port in source_ports {
+                let udp_segment = self.build_udp_segment(source_port);
+                let packet = Self::encapsulate_udp_in_ipv4_as_bytes(&ipv4_datagram, &udp_segment);
+                let socket_addr: SockAddr = self.build_destination_sock_address();
+                socket.send_to(&packet, &socket_addr).unwrap();
+                self.destination_port += 1;
+            }
+        }
+
+        while let Ok(traceroute_hop_response) = receiver.recv() {
+            let hop_response_id = &traceroute_hop_response.id;
+            if let Some(hop) = self.hops_by_id.get_mut(hop_response_id) {
+                if let Some(hop_result) = hop.complete_query(traceroute_hop_response) {
+                    self.channel.send(hop_result).unwrap();
+                }
+            }
+        }
+    }
+
+    fn build_socket(&self) -> Socket {
+        let socket_udp = Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::UDP)).unwrap();
+        socket_udp.set_header_included(true).unwrap();
+        socket_udp
+    }
+
+    fn build_ipv4_datagram(&self, ttl: u8) -> Ipv4 {
+        Ipv4 {
+            version: 4,
+            header_length: 5,
+            dscp: 0,
+            ecn: 0,
+            total_length: 28,
+            identification: ttl as u16,
+            flags: 0,
+            fragment_offset: 0,
+            ttl,
+            next_level_protocol: IpNextHeaderProtocol::new(17),
+            checksum: 0,
+            source: Ipv4Addr::UNSPECIFIED,
+            destination: self.destination_address,
+            options: vec![],
+            payload: vec![]
+        }
+    }
+
+    fn generate_source_ports(&self) -> HashSet<u16> {
+        let mut random_unique_port_gen = RandomUniquePort::new();
+        random_unique_port_gen.generate_ports(self.queries_per_hop)
+    }
+
+    fn build_udp_segment(&self, source_port: u16) -> Udp {
+        Udp {
+            source: source_port,
+            destination: self.destination_port,
+            length: 8,
+            checksum: 0,
+            payload: vec![]
+        }
+    }
+
+    fn encapsulate_udp_in_ipv4_as_bytes(ipv4_datagram: &Ipv4, udp_segment: &Udp) -> Vec<u8> {
+        let udp_bytes = udp_segment.to_bytes();
+        let mut ipv4_bytes = ipv4_datagram.to_bytes();
+        ipv4_bytes.extend(udp_bytes);
+        ipv4_bytes
+    }
+
+    fn build_destination_sock_address(&self) -> SockAddr {
+        let destination_address_str = self.destination_address.to_string();
+        let destination_port = &self.destination_port;
+        SocketAddr::from_str(&format!("{destination_address_str}:{destination_port}")).unwrap().into()
+    }
+}
+
+pub struct TracerouteTerminal {
+    current_hop: u16,
+    destination_address: Ipv4Addr,
+    tot_hops: u16,
+    queries_per_hop: u16,
+    timeout: Duration,
+    channel: Receiver<TracerouteHopResult>,
+    displayable_hop_by_id: HashMap<u16, TracerouteDisplayableHop>,
+}
+
+impl TracerouteTerminal {
+    pub fn new(
+        destination_address: Ipv4Addr,
+        tot_hops: u16,
+        queries_per_hop: u16,
+        timeout: Duration,
+        channel: Receiver<TracerouteHopResult>,
+    ) -> Self {
+        Self {
+            current_hop: 1,
+            destination_address,
+            tot_hops,
+            queries_per_hop,
+            timeout,
+            channel,
+            displayable_hop_by_id: HashMap::with_capacity(tot_hops as usize)
+        }
+    }
+
+    pub fn display(&mut self) {
+        let mut timeout = self.timeout;
+        let mut first_private = false;
+
+        loop {
+
+            let current_displayable_hop = self.displayable_hop_by_id
+                .entry(self.current_hop)
+                .or_insert(TracerouteDisplayableHop::new(self.current_hop, self.queries_per_hop));
+
+            match current_displayable_hop.get_status() {
+                Completed => {
+                    self.print_current_hop();
+                    self.current_hop += 1;
+                    continue;
+                },
+                _ => (),
+            }
+
+            let start_recv_time = Instant::now();
+
+            match self.channel.recv_timeout(timeout) {
+                Ok(hop_result) => {
+                    if first_private {
+                        first_private = false;
+                        for _ in self.current_hop..hop_result.id {
+                            self.print_current_hop();
+                            self.current_hop += 1;
+                        }
+                        timeout = self.timeout;
+                    }
+
+                    if hop_result.address.is_private() {
+                        first_private = true;
+                        self.print_current_hop();
+                        self.current_hop += 1;
+                        timeout = self.timeout;
+                        continue;
+                    }
+
+                    let hop_id = hop_result.id;
+
+                    let displayable_hop = self.displayable_hop_by_id
+                        .entry(hop_id)
+                        .or_insert(TracerouteDisplayableHop::new(hop_id, self.queries_per_hop));
+
+                    displayable_hop.add_result(hop_result);
+
+                    match displayable_hop.get_status() {
+                        Completed => {
+                            if hop_id == self.current_hop {
+                                self.print_current_hop();
+                                self.current_hop += 1;
+                                timeout = self.timeout;
+                            }
+                        },
+                        PartiallyCompleted | NoReply => {
+                            let elapsed = start_recv_time.elapsed();
+                            timeout = timeout.saturating_sub(elapsed);
+                        },
+                    }
+                },
+                Err(_) => {
+                    self.print_current_hop();
+                    self.current_hop += 1;
+                    timeout = self.timeout;
+                },
+            }
+        }
+    }
+
+    fn print_current_hop(&mut self) {
+        let current_displayable_hop = self.displayable_hop_by_id
+            .entry(self.current_hop)
+            .or_insert(TracerouteDisplayableHop::new(self.current_hop, self.queries_per_hop));
+
+        print!("{current_displayable_hop}");
+    }
+}
+
+pub struct TracerouteIcmpReceiver {
+    socket: Socket,
+    buffer: [MaybeUninit<u8>; 100],
+    channel: Sender<TracerouteHopResponse>,
+    target_address: Ipv4Addr,
+    is_listening: bool,
+}
+
+impl TracerouteIcmpReceiver {
+    pub fn new(
+        channel: Sender<TracerouteHopResponse>,
+        destination_address: Ipv4Addr
+    ) -> Self {
+        TracerouteIcmpReceiver {
+            socket: Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4)).unwrap(),
+            buffer: [MaybeUninit::new(0); 100],
+            channel,
+            target_address: destination_address,
+            is_listening: false
+        }
+    }
+
+    pub fn capture(&mut self) {
+        if self.is_listening {
+            panic!("")
+        }
+        self.is_listening = true;
+
+        loop {
+            let data = match self.socket.recv_from(&mut self.buffer) {
+                Ok(_) => self.map_buffer_to_vec_u8(),
+                Err(_) => break,
+            };
+
+            let ipv4_datagram = match Self::build_ipv4_datagram(&data) {
+                Some(ipv4_datagram) => ipv4_datagram,
+                None => continue,
+            };
+
+            let icmp_packet = match Self::build_icmpv4_packet(&ipv4_datagram.payload) {
+                Some(ipv4_datagram) => ipv4_datagram,
+                None => continue,
+            };
+
+            if !Self::is_icmp_ttl_expired(&icmp_packet) &&
+               !Self::is_icmp_destination_port_unreachable(&icmp_packet) {
+                continue;
+            }
+
+            let ipv4_header = match Self::extract_ipv4_header_from(&icmp_packet) {
+                Some(ipv4_header) => ipv4_header,
+                None => continue
+            };
+
+            let udp_header = match Self::extract_udp_header_from(&icmp_packet) {
+                Some(udp_header) => udp_header,
+                None => continue
+            };
+
+            let hop_response_id = ipv4_header.identification;
+            let node_address = ipv4_datagram.source;
+            let port = udp_header.source;
+
+            match self.channel.send(TracerouteHopResponse {
+                id: hop_response_id,
+                address: node_address,
+                port
+            }) {
+                Ok(_) => continue,
+                Err(_) => panic!("")
+            };
+        }
+    }
+
+    pub fn close(&mut self) -> std::io::Result<()> {
+        if !self.is_listening {
+            panic!("")
+        }
+
+        self.is_listening = false;
+        self.socket.shutdown(Shutdown::Read)
+    }
+
+    fn map_buffer_to_vec_u8(&self) -> Vec<u8> {
+        self.buffer
+            .iter()
+            .map(|maybe_uninit| unsafe { maybe_uninit.assume_init_read() })
+            .collect()
+    }
+
+    fn is_equal_to_target_address(&self, address: &Ipv4Addr) -> bool {
+        self.target_address.eq(address)
+    }
+
+    fn build_ipv4_datagram(data: &[u8]) -> Option<Ipv4> {
+        let ipv4packet = Ipv4Packet::new(&data)?;
+        Some(ipv4packet.from_packet())
+    }
+
+    fn build_icmpv4_packet(data: &[u8]) -> Option<Icmp> {
+        let icmp_packet = IcmpPacket::new(data)?;
+        Some(icmp_packet.from_packet())
+    }
+
+    fn is_icmp_ttl_expired(icmp_packet: &Icmp) -> bool {
+        let icmp_type = icmp_packet.icmp_type.0;
+        let icmp_code = icmp_packet.icmp_code.0;
+        icmp_type == 11 && icmp_code == 0
+    }
+
+    fn is_icmp_destination_port_unreachable(icmp_packet: &Icmp) -> bool {
+        let icmp_type = icmp_packet.icmp_type.0;
+        let icmp_code = icmp_packet.icmp_code.0;
+        icmp_type == 3 && icmp_code == 3
+    }
+
+    fn extract_ipv4_header_from(icmp_packet: &Icmp) -> Option<Ipv4> {
+        let payload = &icmp_packet.payload;
+        let payload: Vec<u8> = payload
+            .into_iter()
+            .skip_while(|byte| **byte != 69)
+            .map(|byte| *byte)
+            .collect();
+
+        Self::build_ipv4_datagram(&payload[..20])
+    }
+
+    fn extract_udp_header_from(icmp_packet: &Icmp) -> Option<Udp> {
+        let payload = &icmp_packet.payload;
+        let payload: Vec<u8> = payload
+            .into_iter()
+            .skip_while(|byte| **byte != 69)
+            .map(|byte| *byte)
+            .collect();
+
+        let udp_packet = UdpPacket::new(&payload[20..28])?;
+        Some(udp_packet.from_packet())
+    }
+}
