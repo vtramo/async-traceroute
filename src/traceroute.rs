@@ -5,6 +5,7 @@ use std::hash::Hash;
 use std::mem::MaybeUninit;
 use std::net::{Ipv4Addr, Shutdown, SocketAddr};
 use std::str::FromStr;
+use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
@@ -20,6 +21,7 @@ use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use TracerouteHopStatus::{Completed, NoReply, PartiallyCompleted};
 
 use crate::bytes::ToBytes;
+use crate::TracerouteOptions;
 
 pub struct RandomUniquePort {
     generated_ports: HashSet<u16>,
@@ -294,50 +296,59 @@ impl Traceroute {
 }
 
 pub struct TracerouteTerminal {
+    traceroute_options: TracerouteOptions,
     current_hop: u16,
-    destination_address: Ipv4Addr,
-    tot_hops: u16,
-    queries_per_hop: u16,
     timeout: Duration,
-    channel: Receiver<TracerouteHopResult>,
+    destination_address: Ipv4Addr,
     displayable_hop_by_id: HashMap<u16, TracerouteDisplayableHop>,
 }
 
 impl TracerouteTerminal {
-    pub fn new(
-        destination_address: Ipv4Addr,
-        tot_hops: u16,
-        queries_per_hop: u16,
-        timeout: Duration,
-        channel: Receiver<TracerouteHopResult>,
-    ) -> Self {
+    pub fn new(traceroute_options: TracerouteOptions) -> Self {
+        let tot_hops = traceroute_options.hops;
+        let timeout = Duration::from_secs(traceroute_options.wait as u64);
+        let destination_address = traceroute_options.destination_address;
+
         Self {
+            traceroute_options,
             current_hop: 1,
-            destination_address,
-            tot_hops,
-            queries_per_hop,
             timeout,
-            channel,
+            destination_address,
             displayable_hop_by_id: HashMap::with_capacity(tot_hops as usize)
         }
     }
 
-    pub fn display(&mut self) {
+    pub fn start(&mut self) {
+        let (sender, receiver) = mpsc::channel();
+
+        let traceroute = Traceroute::new(
+            self.traceroute_options.destination_address.clone(),
+            self.traceroute_options.hops,
+            self.traceroute_options.queries_per_hop,
+            self.traceroute_options.initial_destination_port,
+            sender
+        );
+
+        thread::spawn(move || {
+            traceroute.traceroute();
+        });
+
+        self.display(receiver);
+    }
+
+    fn display(&mut self, channel: Receiver<TracerouteHopResult>) {
+        let mut private_hop_ids = HashSet::with_capacity(self.traceroute_options.queries_per_hop as usize);
         let mut timeout = self.timeout;
-        let mut first_private = false;
+        let mut private_address_encountered = false;
         let mut stop = false;
 
         while !stop {
-            let current_displayable_hop = self.displayable_hop_by_id
-                .entry(self.current_hop)
-                .or_insert(TracerouteDisplayableHop::new(self.current_hop, self.queries_per_hop));
-
+            let current_displayable_hop = self.get_or_default_displayable_hop(self.current_hop);
+            let current_hop_address = current_displayable_hop.get_address().unwrap_or(Ipv4Addr::UNSPECIFIED);
             match current_displayable_hop.get_status() {
                 Completed => {
-                    if let Some(address) = current_displayable_hop.get_address() {
-                        if self.is_destination_address(&address) {
-                            stop = true;
-                        }
+                    if self.is_destination_address(&current_hop_address) {
+                        stop = true;
                     }
 
                     self.print_current_displayable_hop();
@@ -348,23 +359,21 @@ impl TracerouteTerminal {
             }
 
             let start_recv_time = Instant::now();
-
-            match self.channel.recv_timeout(timeout) {
+            match channel.recv_timeout(timeout) {
                 Ok(hop_result) => {
-                    if first_private {
-                        first_private = false;
+                    if private_hop_ids.contains(&hop_result.id) {
+                        continue;
+                    }
 
-                        for _ in self.current_hop..hop_result.id {
-                            self.print_current_displayable_hop();
-                            self.current_hop += 1;
-                        }
-
+                    if private_address_encountered {
+                        private_address_encountered = false;
+                        self.reach_hop_by_force(hop_result.id);
                         timeout = self.timeout;
                     }
 
                     if hop_result.address.is_private() {
-                        first_private = true;
-
+                        private_hop_ids.insert(hop_result.id);
+                        private_address_encountered = true;
                         if self.is_destination_address(&hop_result.address) {
                             stop = true;
                         }
@@ -376,20 +385,14 @@ impl TracerouteTerminal {
                     }
 
                     let hop_id = hop_result.id;
-
-                    let displayable_hop = self.displayable_hop_by_id
-                        .entry(hop_id)
-                        .or_insert(TracerouteDisplayableHop::new(hop_id, self.queries_per_hop));
-
+                    let displayable_hop = self.get_or_default_displayable_hop(hop_id);
                     displayable_hop.add_result(hop_result);
 
                     match displayable_hop.get_status() {
                         Completed => {
                             if hop_id == self.current_hop {
-                                if let Some(address) = displayable_hop.get_address() {
-                                    if self.is_destination_address(&address) {
-                                        stop = true;
-                                    }
+                                if self.is_destination_address(&current_hop_address) {
+                                    stop = true;
                                 }
 
                                 self.print_current_displayable_hop();
@@ -404,10 +407,8 @@ impl TracerouteTerminal {
                     }
                 },
                 Err(_) => {
-                    if let Some(address) = current_displayable_hop.get_address() {
-                        if self.is_destination_address(&address) {
-                            stop = true;
-                        }
+                    if self.is_destination_address(&current_hop_address) {
+                        stop = true;
                     }
 
                     self.print_current_displayable_hop();
@@ -416,6 +417,25 @@ impl TracerouteTerminal {
                 },
             }
         }
+    }
+
+    fn reach_hop_by_force(&mut self, hop_id: u16) {
+        if self.current_hop >= hop_id {
+            panic!()
+        }
+
+        for _ in self.current_hop..hop_id {
+            self.print_current_displayable_hop();
+            self.current_hop += 1;
+        }
+    }
+
+    fn get_or_default_displayable_hop(&mut self, hop_id: u16) -> &mut TracerouteDisplayableHop {
+        self.displayable_hop_by_id
+            .entry(hop_id)
+            .or_insert(TracerouteDisplayableHop::new(
+                hop_id,
+                self.traceroute_options.queries_per_hop))
     }
 
     fn print_current_displayable_hop(&self) {
