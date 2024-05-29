@@ -4,6 +4,20 @@
 written in Rust. This project was created as a learning exercise to better understand Rust and the basic concepts of networks.
 This Rust-based implementation is a simplified version of the original traceroute and is intended for educational purposes
 and personal enjoyment.
+```
+Usage: traceroute [OPTIONS] <DESTINATION_ADDRESS>
+
+Arguments:
+  <DESTINATION_ADDRESS>  
+
+Options:
+      --hops <HOPS>                                          [default: 30]
+  -q, --queries-per-hop <QUERIES_PER_HOP>                    [default: 3]
+  -p, --initial-destination-port <INITIAL_DESTINATION_PORT>  [default: 33434]
+  -w, --wait <WAIT>                                          [default: 3]
+  -h, --help                                                 Print help
+  -V, --version                                              Print version
+```
 
 ## What is Traceroute
 Traceroute allows you to see the path an IP packet takes from one host to another. It uses the **TTL (Time To Live)** field
