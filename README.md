@@ -5,10 +5,10 @@ written in Rust. This project was created as a learning exercise to better under
 This Rust-based implementation is a simplified version of the original traceroute and is intended for educational purposes
 and personal enjoyment.
 ```
-Usage: traceroute [OPTIONS] <DESTINATION_ADDRESS>
+Usage: traceroute [OPTIONS] <HOST>
 
 Arguments:
-  <DESTINATION_ADDRESS>  
+  <HOST>  
 
 Options:
       --hops <HOPS>                                          [default: 30]
