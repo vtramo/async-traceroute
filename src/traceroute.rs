@@ -1,9 +1,8 @@
 use std::{sync, thread};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
-use std::hash::Hash;
 use std::mem::MaybeUninit;
-use std::net::{Ipv4Addr, Shutdown, SocketAddr};
+use std::net::{Ipv4Addr, SocketAddr};
 use std::str::FromStr;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
@@ -209,7 +208,7 @@ impl Traceroute {
         let (sender, receiver) = sync::mpsc::channel();
 
         thread::spawn(move || {
-            let mut icmp_receiver = TracerouteIcmpReceiver::new(sender, self.destination_address.clone());
+            let mut icmp_receiver = TracerouteIcmpReceiver::new(sender);
             icmp_receiver.capture();
         });
 
@@ -457,20 +456,15 @@ pub struct TracerouteIcmpReceiver {
     socket: Socket,
     buffer: [MaybeUninit<u8>; 100],
     channel: Sender<TracerouteHopResponse>,
-    target_address: Ipv4Addr,
     is_listening: bool,
 }
 
 impl TracerouteIcmpReceiver {
-    pub fn new(
-        channel: Sender<TracerouteHopResponse>,
-        destination_address: Ipv4Addr
-    ) -> Self {
+    pub fn new(channel: Sender<TracerouteHopResponse>) -> Self {
         TracerouteIcmpReceiver {
             socket: Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4)).unwrap(),
             buffer: [MaybeUninit::new(0); 100],
             channel,
-            target_address: destination_address,
             is_listening: false
         }
     }
@@ -527,24 +521,11 @@ impl TracerouteIcmpReceiver {
         }
     }
 
-    pub fn close(&mut self) -> std::io::Result<()> {
-        if !self.is_listening {
-            panic!("")
-        }
-
-        self.is_listening = false;
-        self.socket.shutdown(Shutdown::Read)
-    }
-
     fn map_buffer_to_vec_u8(&self) -> Vec<u8> {
         self.buffer
             .iter()
             .map(|maybe_uninit| unsafe { maybe_uninit.assume_init_read() })
             .collect()
-    }
-
-    fn is_equal_to_target_address(&self, address: &Ipv4Addr) -> bool {
-        self.target_address.eq(address)
     }
 
     fn build_ipv4_datagram(data: &[u8]) -> Option<Ipv4> {

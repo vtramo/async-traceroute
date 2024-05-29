@@ -1,13 +1,8 @@
 use std::error::Error;
 use std::net::Ipv4Addr;
-use std::ops::Add;
-use std::str::FromStr;
 
 use clap::Parser;
-use libpacket::{FromPacket, PrimitiveValues};
-use rand::Rng;
 
-use crate::bytes::ToBytes;
 use crate::traceroute::TracerouteTerminal;
 
 mod bytes;
