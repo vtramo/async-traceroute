@@ -127,6 +127,12 @@ impl TracerouteDisplayableHop {
             PartiallyCompleted
         }
     }
+
+    pub fn get_address(&self) -> Option<Ipv4Addr> {
+        self.results
+            .get(0)
+            .map(|result| result.address)
+    }
 }
 
 impl Display for TracerouteDisplayableHop {
@@ -319,16 +325,22 @@ impl TracerouteTerminal {
     pub fn display(&mut self) {
         let mut timeout = self.timeout;
         let mut first_private = false;
+        let mut stop = false;
 
-        loop {
-
+        while !stop {
             let current_displayable_hop = self.displayable_hop_by_id
                 .entry(self.current_hop)
                 .or_insert(TracerouteDisplayableHop::new(self.current_hop, self.queries_per_hop));
 
             match current_displayable_hop.get_status() {
                 Completed => {
-                    self.print_current_hop();
+                    if let Some(address) = current_displayable_hop.get_address() {
+                        if self.is_destination_address(&address) {
+                            stop = true;
+                        }
+                    }
+
+                    self.print_current_displayable_hop();
                     self.current_hop += 1;
                     continue;
                 },
@@ -341,16 +353,23 @@ impl TracerouteTerminal {
                 Ok(hop_result) => {
                     if first_private {
                         first_private = false;
+
                         for _ in self.current_hop..hop_result.id {
-                            self.print_current_hop();
+                            self.print_current_displayable_hop();
                             self.current_hop += 1;
                         }
+
                         timeout = self.timeout;
                     }
 
                     if hop_result.address.is_private() {
                         first_private = true;
-                        self.print_current_hop();
+
+                        if self.is_destination_address(&hop_result.address) {
+                            stop = true;
+                        }
+
+                        self.print_current_displayable_hop();
                         self.current_hop += 1;
                         timeout = self.timeout;
                         continue;
@@ -367,7 +386,13 @@ impl TracerouteTerminal {
                     match displayable_hop.get_status() {
                         Completed => {
                             if hop_id == self.current_hop {
-                                self.print_current_hop();
+                                if let Some(address) = displayable_hop.get_address() {
+                                    if self.is_destination_address(&address) {
+                                        stop = true;
+                                    }
+                                }
+
+                                self.print_current_displayable_hop();
                                 self.current_hop += 1;
                                 timeout = self.timeout;
                             }
@@ -379,7 +404,13 @@ impl TracerouteTerminal {
                     }
                 },
                 Err(_) => {
-                    self.print_current_hop();
+                    if let Some(address) = current_displayable_hop.get_address() {
+                        if self.is_destination_address(&address) {
+                            stop = true;
+                        }
+                    }
+
+                    self.print_current_displayable_hop();
                     self.current_hop += 1;
                     timeout = self.timeout;
                 },
@@ -387,12 +418,18 @@ impl TracerouteTerminal {
         }
     }
 
-    fn print_current_hop(&mut self) {
-        let current_displayable_hop = self.displayable_hop_by_id
-            .entry(self.current_hop)
-            .or_insert(TracerouteDisplayableHop::new(self.current_hop, self.queries_per_hop));
+    fn print_current_displayable_hop(&self) {
+        let current_hop_id = &self.current_hop;
+        let hop_string = self.displayable_hop_by_id
+            .get(current_hop_id)
+            .map(|current_displayable_hop| current_displayable_hop.to_string())
+            .unwrap_or(format!("{current_hop_id} - * * * * *\n"));
 
-        print!("{current_displayable_hop}");
+        print!("{hop_string}");
+    }
+
+    fn is_destination_address(&self, address: &Ipv4Addr) -> bool {
+        self.destination_address.eq(address)
     }
 }
 
