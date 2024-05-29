@@ -1,9 +1,9 @@
 use std::error::Error;
-use std::net::Ipv4Addr;
+use std::net::ToSocketAddrs;
 
 use clap::Parser;
 
-use crate::traceroute::TracerouteTerminal;
+use crate::traceroute::{TracerouteError, TracerouteTerminal};
 
 mod bytes;
 mod traceroute;
@@ -14,7 +14,7 @@ mod traceroute;
 #[command(bin_name = "traceroute")]
 struct TracerouteOptions {
     #[clap(required = true, index = 1)]
-    destination_address: Ipv4Addr,
+    host: String,
 
     #[clap(long, default_value_t = 30)]
     hops: u16,
@@ -31,7 +31,14 @@ struct TracerouteOptions {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let traceroute_options = TracerouteOptions::parse();
-    let mut traceroute_terminal = TracerouteTerminal::new(traceroute_options);
+    let mut traceroute_terminal = match TracerouteTerminal::new(traceroute_options) {
+        Ok(traceroute) => traceroute,
+        Err(traceroute_error) => match traceroute_error {
+            TracerouteError::HostnameNotResolved(hostname) => {
+                panic!("{hostname}: Temporary failure in name resolution");
+            }
+        }
+    };
     traceroute_terminal.start();
     Ok(())
 }

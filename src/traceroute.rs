@@ -2,7 +2,7 @@ use std::{sync, thread};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 use std::mem::MaybeUninit;
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs};
 use std::str::FromStr;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
@@ -294,34 +294,50 @@ impl Traceroute {
     }
 }
 
+fn nslookup(hostname: &str) -> Option<IpAddr> {
+    let sock_addrs = format!("{hostname}:1234").to_socket_addrs();
+    if sock_addrs.is_err() {
+        return None;
+    }
+    let mut sock_addrs = sock_addrs.unwrap();
+    sock_addrs.next().map(|sock_addr| sock_addr.ip())
+}
+
 pub struct TracerouteTerminal {
     traceroute_options: TracerouteOptions,
     current_hop: u16,
     timeout: Duration,
-    destination_address: Ipv4Addr,
+    destination_address: IpAddr,
     displayable_hop_by_id: HashMap<u16, TracerouteDisplayableHop>,
 }
 
+pub enum TracerouteError {
+    HostnameNotResolved(String)
+}
+
 impl TracerouteTerminal {
-    pub fn new(traceroute_options: TracerouteOptions) -> Self {
+    pub fn new(traceroute_options: TracerouteOptions) -> Result<Self, TracerouteError> {
         let tot_hops = traceroute_options.hops;
         let timeout = Duration::from_secs(traceroute_options.wait as u64);
-        let destination_address = traceroute_options.destination_address;
+        let hostname = traceroute_options.host.clone();
+        let destination_address = nslookup(&hostname)
 
-        Self {
+            .ok_or_else(|| TracerouteError::HostnameNotResolved(hostname))?;
+
+        Ok(Self {
             traceroute_options,
             current_hop: 1,
             timeout,
             destination_address,
             displayable_hop_by_id: HashMap::with_capacity(tot_hops as usize)
-        }
+        })
     }
 
     pub fn start(&mut self) {
         let (sender, receiver) = mpsc::channel();
 
         let traceroute = Traceroute::new(
-            self.traceroute_options.destination_address.clone(),
+            Ipv4Addr::from_str(&self.destination_address.to_string()).unwrap(),
             self.traceroute_options.hops,
             self.traceroute_options.queries_per_hop,
             self.traceroute_options.initial_destination_port,
