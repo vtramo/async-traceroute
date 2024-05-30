@@ -1,4 +1,5 @@
 use std::{sync, thread};
+use std::cmp::{max, min};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 use std::mem::MaybeUninit;
@@ -186,6 +187,8 @@ pub struct Traceroute {
     hops_by_id: HashMap<u16, TracerouteHop>,
 }
 
+const MAX_TTL_PACKETS_AT_ONCE: u16 = 3;
+
 impl Traceroute {
     pub fn new(
         destination_address: Ipv4Addr,
@@ -206,37 +209,45 @@ impl Traceroute {
 
     pub fn traceroute(mut self) {
         let (sender, receiver) = sync::mpsc::channel();
-
-        thread::spawn(move || {
-            let mut icmp_receiver = TracerouteIcmpReceiver::new(sender);
-            icmp_receiver.capture();
-        });
+        Self::start_icmp_receiver(sender);
 
         let socket = self.build_socket();
-
-
-        for ttl in 1..=self.hops {
-            let ipv4_datagram = self.build_ipv4_datagram(ttl as u8);
-            let source_ports = self.generate_source_ports();
-            let traceroute_hop = TracerouteHop::new(ttl, source_ports.clone());
-            self.hops_by_id.insert(traceroute_hop.id, traceroute_hop);
-            
-            for source_port in source_ports {
-                let udp_segment = self.build_udp_segment(source_port);
-                let packet = Self::encapsulate_udp_in_ipv4_as_bytes(&ipv4_datagram, &udp_segment);
-                let socket_addr: SockAddr = self.build_destination_sock_address();
-                socket.send_to(&packet, &socket_addr).unwrap();
-                self.destination_port += 1;
-            }
+        let mut ttl_counter = min(MAX_TTL_PACKETS_AT_ONCE, self.hops * self.queries_per_hop);
+        for ttl in 1..=ttl_counter {
+            self.send_ttl_query_packets(&socket, ttl);
         }
 
         while let Ok(traceroute_hop_response) = receiver.recv() {
+            ttl_counter += 1;
+            self.send_ttl_query_packets(&socket, ttl_counter);
             let hop_response_id = &traceroute_hop_response.id;
             if let Some(hop) = self.hops_by_id.get_mut(hop_response_id) {
                 if let Some(hop_result) = hop.complete_query(traceroute_hop_response) {
                     self.channel.send(hop_result).unwrap();
                 }
             }
+        }
+    }
+
+    fn start_icmp_receiver(sender: Sender<TracerouteHopResponse>) {
+        thread::spawn(move || {
+            let mut icmp_receiver = TracerouteIcmpReceiver::new(sender);
+            icmp_receiver.capture();
+        });
+    }
+
+    fn send_ttl_query_packets(&mut self, socket: &Socket, ttl: u16) {
+        let ipv4_datagram = self.build_ipv4_datagram(ttl as u8);
+        let source_ports = self.generate_source_ports();
+        let traceroute_hop = TracerouteHop::new(ttl, source_ports.clone());
+        self.hops_by_id.insert(traceroute_hop.id, traceroute_hop);
+
+        for source_port in source_ports {
+            let udp_segment = self.build_udp_segment(source_port);
+            let packet = Self::encapsulate_udp_in_ipv4_as_bytes(&ipv4_datagram, &udp_segment);
+            let socket_addr: SockAddr = self.build_destination_sock_address();
+            socket.send_to(&packet, &socket_addr).unwrap();
+            self.destination_port += 1;
         }
     }
 
