@@ -214,6 +214,7 @@ impl Traceroute {
 
         let socket = self.build_socket();
 
+
         for ttl in 1..=self.hops {
             let ipv4_datagram = self.build_ipv4_datagram(ttl as u8);
             let source_ports = self.generate_source_ports();
@@ -357,7 +358,8 @@ impl TracerouteTerminal {
         let mut private_address_encountered = false;
         let mut stop = false;
 
-        while !stop {
+        let hops = self.traceroute_options.hops;
+        while !stop && self.current_hop <= hops {
             let current_displayable_hop = self.get_or_default_displayable_hop(self.current_hop);
             let current_hop_address = current_displayable_hop.get_address().unwrap_or(Ipv4Addr::UNSPECIFIED);
             match current_displayable_hop.get_status() {
