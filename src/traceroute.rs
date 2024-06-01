@@ -364,9 +364,7 @@ impl TracerouteTerminal {
     }
 
     fn display(&mut self, channel: Receiver<TracerouteHopResult>) {
-        let mut private_hop_ids = HashSet::with_capacity(self.traceroute_options.queries_per_hop as usize);
         let mut timeout = self.timeout;
-        let mut private_address_encountered = false;
         let mut stop = false;
 
         let hops = self.traceroute_options.hops;
@@ -389,29 +387,6 @@ impl TracerouteTerminal {
             let start_recv_time = Instant::now();
             match channel.recv_timeout(timeout) {
                 Ok(hop_result) => {
-                    if private_hop_ids.contains(&hop_result.id) {
-                        continue;
-                    }
-
-                    if private_address_encountered {
-                        private_address_encountered = false;
-                        self.reach_hop_by_force(hop_result.id);
-                        timeout = self.timeout;
-                    }
-
-                    if hop_result.address.is_private() {
-                        private_hop_ids.insert(hop_result.id);
-                        private_address_encountered = true;
-                        if self.is_destination_address(&hop_result.address) {
-                            stop = true;
-                        }
-
-                        self.print_current_displayable_hop();
-                        self.current_hop += 1;
-                        timeout = self.timeout;
-                        continue;
-                    }
-
                     let hop_id = hop_result.id;
                     let displayable_hop = self.get_or_default_displayable_hop(hop_id);
                     displayable_hop.add_result(hop_result);
