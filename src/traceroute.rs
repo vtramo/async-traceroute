@@ -141,12 +141,6 @@ impl TracerouteDisplayableHop {
             PartiallyCompleted
         }
     }
-
-    pub fn get_address(&self) -> Option<Ipv4Addr> {
-        self.results
-            .get(0)
-            .map(|result| result.address)
-    }
 }
 
 impl Display for TracerouteDisplayableHop {
@@ -479,11 +473,15 @@ impl TracerouteTerminal {
 
         let hops = self.traceroute_options.hops;
         while !stop && self.current_hop_id <= hops {
-            let current_displayable_hop = self.get_or_default_displayable_hop(self.current_hop_id);
-            let current_hop_address = current_displayable_hop.get_address().unwrap_or(Ipv4Addr::UNSPECIFIED);
+            let current_displayable_hop = self.displayable_hop_by_id
+                .entry(self.current_hop_id)
+                .or_insert(TracerouteDisplayableHop::new(
+                    self.current_hop_id,
+                    self.traceroute_options.queries_per_hop));
+            
             match current_displayable_hop.get_status() {
                 Completed => {
-                    if self.is_destination_address(&current_hop_address) {
+                    if current_displayable_hop.contains_address(&self.destination_address) {
                         stop = true;
                     }
 
@@ -498,13 +496,17 @@ impl TracerouteTerminal {
             match channel.recv_timeout(timeout) {
                 Ok(hop_result) => {
                     let hop_id = hop_result.id;
-                    let displayable_hop = self.get_or_default_displayable_hop(hop_id);
+                    let displayable_hop = self.displayable_hop_by_id
+                        .entry(hop_id)
+                        .or_insert(TracerouteDisplayableHop::new(
+                            hop_id,
+                            self.traceroute_options.queries_per_hop));
                     displayable_hop.add_result(hop_result);
 
                     match displayable_hop.get_status() {
                         Completed => {
                             if hop_id == self.current_hop_id {
-                                if self.is_destination_address(&current_hop_address) {
+                                if displayable_hop.contains_address(&self.destination_address) {
                                     stop = true;
                                 }
 
@@ -520,7 +522,7 @@ impl TracerouteTerminal {
                     }
                 },
                 Err(_) => {
-                    if self.is_destination_address(&current_hop_address) {
+                    if current_displayable_hop.contains_address(&self.destination_address) {
                         stop = true;
                     }
 
@@ -541,14 +543,6 @@ impl TracerouteTerminal {
             self.print_current_displayable_hop();
             self.current_hop_id += 1;
         }
-    }
-
-    fn get_or_default_displayable_hop(&mut self, hop_id: u16) -> &mut TracerouteDisplayableHop {
-        self.displayable_hop_by_id
-            .entry(hop_id)
-            .or_insert(TracerouteDisplayableHop::new(
-                hop_id,
-                self.traceroute_options.queries_per_hop))
     }
 
     fn print_current_displayable_hop(&self) {
