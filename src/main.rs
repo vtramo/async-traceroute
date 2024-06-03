@@ -2,11 +2,13 @@ use std::error::Error;
 use std::net::ToSocketAddrs;
 
 use clap::Parser;
+use libpacket::icmp::{Icmp, IcmpCode, IcmpType};
 
 use crate::traceroute::{TracerouteError, TracerouteTerminal};
 
 mod bytes;
 mod traceroute;
+mod packet_utils;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -40,5 +42,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     };
     traceroute_terminal.start();
+
+    Icmp {
+        icmp_type: IcmpType(8),
+        icmp_code: IcmpCode(0),
+        checksum: 0,
+        payload: vec![]
+    };
+
     Ok(())
 }

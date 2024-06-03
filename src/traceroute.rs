@@ -1,19 +1,18 @@
-use std::{sync, thread};
-use std::cmp::{max, min};
+use std::{io, thread};
+use std::cmp::min;
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
+use std::io::Error;
 use std::mem::MaybeUninit;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use std::str::FromStr;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
-use libpacket::FromPacket;
-use libpacket::icmp::{Icmp, IcmpPacket};
-use libpacket::ip::IpNextHeaderProtocol;
-use libpacket::ipv4::{Ipv4, Ipv4Packet};
-use libpacket::udp::{Udp, UdpPacket};
+use libpacket::ip::IpNextHeaderProtocols::Udp;
+use libpacket::ipv4::Ipv4;
+use libpacket::ipv6::Ipv6;
 use rand::Rng;
 use rand::rngs::ThreadRng;
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
@@ -21,6 +20,7 @@ use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use TracerouteHopStatus::{Completed, NoReply, PartiallyCompleted};
 
 use crate::bytes::ToBytes;
+use crate::packet_utils;
 use crate::TracerouteOptions;
 
 pub struct RandomUniquePort {
@@ -64,12 +64,12 @@ impl RandomUniquePort {
 pub struct TracerouteHop {
     id: u16,
     sent_at: Instant,
-    ports: HashSet<u16>
+    query_ids: HashSet<u16>
 }
 
 impl TracerouteHop {
-    pub fn new(id: u16, source_ports: HashSet<u16>) -> Self {
-        let tot_source_ports = source_ports.len();
+    pub fn new(id: u16, query_ids: HashSet<u16>) -> Self {
+        let tot_source_ports = query_ids.len();
         if tot_source_ports == 0 {
             panic!()
         }
@@ -77,7 +77,7 @@ impl TracerouteHop {
         Self {
             id,
             sent_at: Instant::now(),
-            ports: source_ports
+            query_ids
         }
     }
 
@@ -86,12 +86,12 @@ impl TracerouteHop {
             return None;
         }
 
-        let hop_response_port = hop_response.port;
-        if !self.ports.contains(&hop_response_port) {
+        let hop_response_query_id = hop_response.query_id;
+        if !self.query_ids.contains(&hop_response_query_id) {
             return None;
         }
 
-        self.ports.remove(&hop_response_port);
+        self.query_ids.remove(&hop_response_query_id);
         Some(TracerouteHopResult { id: hop_response.id, address: hop_response.address, rtt: self.sent_at.elapsed() })
     }
 }
@@ -117,6 +117,18 @@ impl TracerouteDisplayableHop {
         }
         
         self.results.push(hop_result);
+    }
+
+    pub fn contains_address(&self, address: &IpAddr) -> bool {
+        let address_ipv4 = match address {
+            IpAddr::V4(ipv4) => ipv4,
+            IpAddr::V6(ipv6) => &Ipv4Addr::UNSPECIFIED,
+        };
+
+        self.results
+            .iter()
+            .find(|&hop_result| hop_result.address.eq(address_ipv4))
+            .is_some()
     }
     
     pub fn get_status(&self) -> TracerouteHopStatus {
@@ -175,89 +187,99 @@ pub struct TracerouteHopResult {
 pub struct TracerouteHopResponse {
     pub id: u16,
     pub address: Ipv4Addr,
-    pub port: u16,
+    pub query_id: u16,
 }
 
-pub struct Traceroute {
-    destination_address: Ipv4Addr,
-    hops: u16,
-    queries_per_hop: u16,
-    destination_port: u16,
-    channel: Sender<TracerouteHopResult>,
-    hops_by_id: HashMap<u16, TracerouteHop>,
+pub trait TracerouteTtlPacketSender: Send {
+    fn send(
+        &mut self,
+        ttl: u8,
+    ) -> Result<TracerouteHop, Error>;
 }
 
-const MAX_TTL_PACKETS_AT_ONCE: u16 = 3;
+pub enum IpDatagram {
+    V4(Ipv4), V6(Ipv6)
+}
 
-impl Traceroute {
-    pub fn new(
-        destination_address: Ipv4Addr,
-        hops: u16,
-        queries_per_hop: u16,
-        initial_destination_port: u16,
-        channel: Sender<TracerouteHopResult>,
-    ) -> Self {
-        Self {
-            destination_address,
-            hops,
-            queries_per_hop,
-            destination_port: initial_destination_port,
-            channel,
-            hops_by_id: HashMap::with_capacity(hops as usize)
+impl ToBytes for IpDatagram {
+    fn to_bytes(&self) -> Vec<u8> {
+        match self {
+            IpDatagram::V4(ipv4_datagram) => ipv4_datagram.to_bytes(),
+            IpDatagram::V6(ipv6_datagram) => todo!()
         }
     }
+}
 
-    pub fn traceroute(mut self) {
-        let (sender, receiver) = sync::mpsc::channel();
-        Self::start_icmp_receiver(sender);
-
-        let socket = self.build_socket();
-        let mut ttl_counter = min(MAX_TTL_PACKETS_AT_ONCE, self.hops * self.queries_per_hop);
-        for ttl in 1..=ttl_counter {
-            self.send_ttl_query_packets(&socket, ttl);
-        }
-
-        while let Ok(traceroute_hop_response) = receiver.recv() {
-            ttl_counter += 1;
-            self.send_ttl_query_packets(&socket, ttl_counter);
-            let hop_response_id = &traceroute_hop_response.id;
-            if let Some(hop) = self.hops_by_id.get_mut(hop_response_id) {
-                if let Some(hop_result) = hop.complete_query(traceroute_hop_response) {
-                    self.channel.send(hop_result).unwrap();
-                }
+impl IpDatagram {
+    pub fn set_payload(&mut self, data: &[u8]) {
+        let data_to_vec = data.to_vec();
+        match self {
+            IpDatagram::V4(ipv4_datagram) => {
+                ipv4_datagram.payload = data_to_vec;
+            },
+            IpDatagram::V6(ipv6_datagram) => {
+                ipv6_datagram.payload = data_to_vec;
             }
         }
     }
 
-    fn start_icmp_receiver(sender: Sender<TracerouteHopResponse>) {
-        thread::spawn(move || {
-            let mut icmp_receiver = TracerouteIcmpReceiver::new(sender);
-            icmp_receiver.capture();
-        });
+    pub fn set_length(&mut self, length: u16) {
+        match self {
+            IpDatagram::V4(ipv4_datagram) => {
+                ipv4_datagram.total_length = length;
+            },
+            IpDatagram::V6(ipv6_datagram) => {
+                ipv6_datagram.payload_length = length;
+            }
+        }
     }
+}
 
-    fn send_ttl_query_packets(&mut self, socket: &Socket, ttl: u16) {
-        let ipv4_datagram = self.build_ipv4_datagram(ttl as u8);
-        let source_ports = self.generate_source_ports();
-        let traceroute_hop = TracerouteHop::new(ttl, source_ports.clone());
-        self.hops_by_id.insert(traceroute_hop.id, traceroute_hop);
+struct UdpTracerouteTtlPacketSender {
+    socket: Socket,
+    destination_address: IpAddr,
+    destination_port: u16,
+    queries_per_hop: u16,
+}
 
-        for source_port in source_ports {
-            let udp_segment = self.build_udp_segment(source_port);
-            let packet = Self::encapsulate_udp_in_ipv4_as_bytes(&ipv4_datagram, &udp_segment);
-            let socket_addr: SockAddr = self.build_destination_sock_address();
-            socket.send_to(&packet, &socket_addr).unwrap();
-            self.destination_port += 1;
+impl UdpTracerouteTtlPacketSender {
+    pub fn new(
+        destination_address: IpAddr,
+        initial_destination_port: u16,
+        queries_per_hop: u16,
+    ) -> Self {
+        Self {
+            socket: Self::build_socket(
+                if destination_address.is_ipv4() {
+                    Domain::IPV4
+                } else {
+                    Domain::IPV6
+                }
+            ),
+            destination_address,
+            destination_port: initial_destination_port,
+            queries_per_hop
         }
     }
 
-    fn build_socket(&self) -> Socket {
-        let socket_udp = Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::UDP)).unwrap();
+    fn build_socket(domain: Domain) -> Socket {
+        let socket_udp = Socket::new(domain, Type::RAW, Some(Protocol::UDP)).unwrap();
         socket_udp.set_header_included(true).unwrap();
         socket_udp
     }
 
-    fn build_ipv4_datagram(&self, ttl: u8) -> Ipv4 {
+    fn build_empty_ip_datagram_with_ttl(&self, ttl: u8) -> IpDatagram {
+        match self.destination_address {
+            IpAddr::V4(ipv4_address) => {
+                IpDatagram::V4(Self::build_empty_ipv4_datagram_with_ttl(ttl, ipv4_address))
+            },
+            IpAddr::V6(ipv6_address) => {
+                IpDatagram::V6(Self::build_empty_ipv6_datagram_with_ttl(ttl, ipv6_address))
+            }
+        }
+    }
+
+    fn build_empty_ipv4_datagram_with_ttl(ttl: u8, destination_address: Ipv4Addr) -> Ipv4 {
         Ipv4 {
             version: 4,
             header_length: 5,
@@ -268,13 +290,17 @@ impl Traceroute {
             flags: 0,
             fragment_offset: 0,
             ttl,
-            next_level_protocol: IpNextHeaderProtocol::new(17),
+            next_level_protocol: Udp,
             checksum: 0,
             source: Ipv4Addr::UNSPECIFIED,
-            destination: self.destination_address,
+            destination: destination_address,
             options: vec![],
             payload: vec![]
         }
+    }
+
+    fn build_empty_ipv6_datagram_with_ttl(ttl: u8, destination_address: Ipv6Addr) -> Ipv6 {
+        todo!()
     }
 
     fn generate_source_ports(&self) -> HashSet<u16> {
@@ -282,27 +308,98 @@ impl Traceroute {
         random_unique_port_gen.generate_ports(self.queries_per_hop)
     }
 
-    fn build_udp_segment(&self, source_port: u16) -> Udp {
-        Udp {
-            source: source_port,
-            destination: self.destination_port,
-            length: 8,
-            checksum: 0,
-            payload: vec![]
-        }
-    }
-
-    fn encapsulate_udp_in_ipv4_as_bytes(ipv4_datagram: &Ipv4, udp_segment: &Udp) -> Vec<u8> {
-        let udp_bytes = udp_segment.to_bytes();
-        let mut ipv4_bytes = ipv4_datagram.to_bytes();
-        ipv4_bytes.extend(udp_bytes);
-        ipv4_bytes
-    }
-
     fn build_destination_sock_address(&self) -> SockAddr {
         let destination_address_str = self.destination_address.to_string();
         let destination_port = &self.destination_port;
         SocketAddr::from_str(&format!("{destination_address_str}:{destination_port}")).unwrap().into()
+    }
+}
+
+impl TracerouteTtlPacketSender for UdpTracerouteTtlPacketSender {
+    fn send(
+        &mut self,
+        ttl: u8,
+    ) -> Result<TracerouteHop, Error> {
+        let mut ip_datagram = self.build_empty_ip_datagram_with_ttl(ttl);
+        let source_ports = self.generate_source_ports();
+        let traceroute_hop = TracerouteHop::new(ttl as u16, source_ports.clone());
+
+        for source_port in source_ports {
+            let udp_datagram = packet_utils::build_udp_datagram_with_ports(source_port, self.destination_port);
+            let udp_datagram_bytes = udp_datagram.to_bytes();
+            ip_datagram.set_payload(&udp_datagram_bytes);
+            ip_datagram.set_length(20 + udp_datagram_bytes.len() as u16);
+
+            let socket_addr: SockAddr = self.build_destination_sock_address();
+            self.socket.send_to(&ip_datagram.to_bytes(), &socket_addr)?;
+            self.destination_port += 1;
+        }
+
+        Ok(traceroute_hop)
+    }
+}
+
+pub struct Traceroute {
+    destination_address: Ipv4Addr,
+    hops: u16,
+    queries_per_hop: u16,
+    destination_port: u16,
+    ttl_packet_sender: Box<dyn TracerouteTtlPacketSender>,
+    channel: Sender<TracerouteHopResult>,
+    hops_by_id: HashMap<u16, TracerouteHop>,
+}
+
+impl Traceroute {
+    const MAX_TTL_PACKETS_AT_ONCE: u16 = 10;
+
+    pub fn new(
+        destination_address: Ipv4Addr,
+        hops: u16,
+        queries_per_hop: u16,
+        initial_destination_port: u16,
+        ttl_packet_sender: Box<dyn TracerouteTtlPacketSender>,
+        channel: Sender<TracerouteHopResult>,
+    ) -> Self {
+        Self {
+            destination_address,
+            hops,
+            queries_per_hop,
+            destination_port: initial_destination_port,
+            ttl_packet_sender,
+            channel,
+            hops_by_id: HashMap::with_capacity(hops as usize)
+        }
+    }
+
+    pub fn traceroute(mut self) -> Result<(), io::Error> {
+        let (sender, receiver) = mpsc::channel();
+        Self::start_icmp_receiver(sender);
+
+        let mut ttl_counter = min(Self::MAX_TTL_PACKETS_AT_ONCE, self.hops * self.queries_per_hop);
+        for ttl in 1..=ttl_counter {
+            let hop = self.ttl_packet_sender.send(ttl as u8)?;
+            self.hops_by_id.insert(hop.id, hop);
+        }
+
+        while let Ok(traceroute_hop_response) = receiver.recv() {
+            ttl_counter += 1;
+            self.ttl_packet_sender.send(ttl_counter as u8)?;
+            let hop_response_id = &traceroute_hop_response.id;
+            if let Some(hop) = self.hops_by_id.get_mut(hop_response_id) {
+                if let Some(hop_result) = hop.complete_query(traceroute_hop_response) {
+                    self.channel.send(hop_result).unwrap();
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn start_icmp_receiver(sender: Sender<TracerouteHopResponse>) {
+        thread::spawn(move || {
+            let mut icmp_receiver = TracerouteIcmpReceiver::new(sender);
+            icmp_receiver.capture();
+        });
     }
 }
 
@@ -315,9 +412,15 @@ fn nslookup(hostname: &str) -> Option<IpAddr> {
     sock_addrs.next().map(|sock_addr| sock_addr.ip())
 }
 
+pub enum TracerouteProtocol {
+    UDP(UdpTracerouteTtlPacketSender),
+    TCP,
+    ICMP
+}
+
 pub struct TracerouteTerminal {
     traceroute_options: TracerouteOptions,
-    current_hop: u16,
+    current_hop_id: u16,
     timeout: Duration,
     destination_address: IpAddr,
     displayable_hop_by_id: HashMap<u16, TracerouteDisplayableHop>,
@@ -333,12 +436,11 @@ impl TracerouteTerminal {
         let timeout = Duration::from_secs(traceroute_options.wait as u64);
         let hostname = traceroute_options.host.clone();
         let destination_address = nslookup(&hostname)
-
             .ok_or_else(|| TracerouteError::HostnameNotResolved(hostname))?;
 
         Ok(Self {
             traceroute_options,
-            current_hop: 1,
+            current_hop_id: 1,
             timeout,
             destination_address,
             displayable_hop_by_id: HashMap::with_capacity(tot_hops as usize)
@@ -348,11 +450,19 @@ impl TracerouteTerminal {
     pub fn start(&mut self) {
         let (sender, receiver) = mpsc::channel();
 
+        let initial_destination_port = self.traceroute_options.initial_destination_port;
+        let queries_per_hop = self.traceroute_options.queries_per_hop;
+        let ttl_packet_sender = Box::new(UdpTracerouteTtlPacketSender::new(
+            self.destination_address,
+            initial_destination_port,
+            queries_per_hop
+        ));
         let traceroute = Traceroute::new(
             Ipv4Addr::from_str(&self.destination_address.to_string()).unwrap(),
             self.traceroute_options.hops,
-            self.traceroute_options.queries_per_hop,
-            self.traceroute_options.initial_destination_port,
+            queries_per_hop,
+            initial_destination_port,
+            ttl_packet_sender,
             sender
         );
 
@@ -368,8 +478,8 @@ impl TracerouteTerminal {
         let mut stop = false;
 
         let hops = self.traceroute_options.hops;
-        while !stop && self.current_hop <= hops {
-            let current_displayable_hop = self.get_or_default_displayable_hop(self.current_hop);
+        while !stop && self.current_hop_id <= hops {
+            let current_displayable_hop = self.get_or_default_displayable_hop(self.current_hop_id);
             let current_hop_address = current_displayable_hop.get_address().unwrap_or(Ipv4Addr::UNSPECIFIED);
             match current_displayable_hop.get_status() {
                 Completed => {
@@ -378,7 +488,7 @@ impl TracerouteTerminal {
                     }
 
                     self.print_current_displayable_hop();
-                    self.current_hop += 1;
+                    self.current_hop_id += 1;
                     continue;
                 },
                 _ => (),
@@ -393,13 +503,13 @@ impl TracerouteTerminal {
 
                     match displayable_hop.get_status() {
                         Completed => {
-                            if hop_id == self.current_hop {
+                            if hop_id == self.current_hop_id {
                                 if self.is_destination_address(&current_hop_address) {
                                     stop = true;
                                 }
 
                                 self.print_current_displayable_hop();
-                                self.current_hop += 1;
+                                self.current_hop_id += 1;
                                 timeout = self.timeout;
                             }
                         },
@@ -415,7 +525,7 @@ impl TracerouteTerminal {
                     }
 
                     self.print_current_displayable_hop();
-                    self.current_hop += 1;
+                    self.current_hop_id += 1;
                     timeout = self.timeout;
                 },
             }
@@ -423,13 +533,13 @@ impl TracerouteTerminal {
     }
 
     fn reach_hop_by_force(&mut self, hop_id: u16) {
-        if self.current_hop >= hop_id {
+        if self.current_hop_id >= hop_id {
             panic!()
         }
 
-        for _ in self.current_hop..hop_id {
+        for _ in self.current_hop_id..hop_id {
             self.print_current_displayable_hop();
-            self.current_hop += 1;
+            self.current_hop_id += 1;
         }
     }
 
@@ -442,7 +552,7 @@ impl TracerouteTerminal {
     }
 
     fn print_current_displayable_hop(&self) {
-        let current_hop_id = &self.current_hop;
+        let current_hop_id = &self.current_hop_id;
         let hop_string = self.displayable_hop_by_id
             .get(current_hop_id)
             .map(|current_displayable_hop| current_displayable_hop.to_string())
@@ -485,27 +595,27 @@ impl TracerouteIcmpReceiver {
                 Err(_) => break,
             };
 
-            let ipv4_datagram = match Self::build_ipv4_datagram(&data) {
+            let ipv4_datagram = match packet_utils::build_ipv4_datagram_from_bytes(&data) {
                 Some(ipv4_datagram) => ipv4_datagram,
                 None => continue,
             };
 
-            let icmp_packet = match Self::build_icmpv4_packet(&ipv4_datagram.payload) {
+            let icmp_packet = match packet_utils::build_icmpv4_packet_from_bytes(&ipv4_datagram.payload) {
                 Some(ipv4_datagram) => ipv4_datagram,
                 None => continue,
             };
 
-            if !Self::is_icmp_ttl_expired(&icmp_packet) &&
-               !Self::is_icmp_destination_port_unreachable(&icmp_packet) {
+            if !packet_utils::is_icmp_ttl_expired(&icmp_packet) &&
+               !packet_utils::is_icmp_destination_port_unreachable(&icmp_packet) {
                 continue;
             }
 
-            let ipv4_header = match Self::extract_ipv4_header_from(&icmp_packet) {
+            let ipv4_header = match packet_utils::extract_ipv4_header_from_icmp_response(&icmp_packet) {
                 Some(ipv4_header) => ipv4_header,
                 None => continue
             };
 
-            let udp_header = match Self::extract_udp_header_from(&icmp_packet) {
+            let udp_header = match packet_utils::extract_udp_header_from_icmp_response(&icmp_packet) {
                 Some(udp_header) => udp_header,
                 None => continue
             };
@@ -517,7 +627,7 @@ impl TracerouteIcmpReceiver {
             match self.channel.send(TracerouteHopResponse {
                 id: hop_response_id,
                 address: node_address,
-                port
+                query_id: port
             }) {
                 Ok(_) => continue,
                 Err(_) => panic!("")
@@ -530,50 +640,5 @@ impl TracerouteIcmpReceiver {
             .iter()
             .map(|maybe_uninit| unsafe { maybe_uninit.assume_init_read() })
             .collect()
-    }
-
-    fn build_ipv4_datagram(data: &[u8]) -> Option<Ipv4> {
-        let ipv4packet = Ipv4Packet::new(&data)?;
-        Some(ipv4packet.from_packet())
-    }
-
-    fn build_icmpv4_packet(data: &[u8]) -> Option<Icmp> {
-        let icmp_packet = IcmpPacket::new(data)?;
-        Some(icmp_packet.from_packet())
-    }
-
-    fn is_icmp_ttl_expired(icmp_packet: &Icmp) -> bool {
-        let icmp_type = icmp_packet.icmp_type.0;
-        let icmp_code = icmp_packet.icmp_code.0;
-        icmp_type == 11 && icmp_code == 0
-    }
-
-    fn is_icmp_destination_port_unreachable(icmp_packet: &Icmp) -> bool {
-        let icmp_type = icmp_packet.icmp_type.0;
-        let icmp_code = icmp_packet.icmp_code.0;
-        icmp_type == 3 && icmp_code == 3
-    }
-
-    fn extract_ipv4_header_from(icmp_packet: &Icmp) -> Option<Ipv4> {
-        let payload = &icmp_packet.payload;
-        let payload: Vec<u8> = payload
-            .into_iter()
-            .skip_while(|byte| **byte != 69)
-            .map(|byte| *byte)
-            .collect();
-
-        Self::build_ipv4_datagram(&payload[..20])
-    }
-
-    fn extract_udp_header_from(icmp_packet: &Icmp) -> Option<Udp> {
-        let payload = &icmp_packet.payload;
-        let payload: Vec<u8> = payload
-            .into_iter()
-            .skip_while(|byte| **byte != 69)
-            .map(|byte| *byte)
-            .collect();
-
-        let udp_packet = UdpPacket::new(&payload[20..28])?;
-        Some(udp_packet.from_packet())
     }
 }
