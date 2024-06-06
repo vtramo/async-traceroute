@@ -1,20 +1,14 @@
 use std::error::Error;
-use std::net::ToSocketAddrs;
 
 use clap::Parser;
-use libpacket::icmp::{Icmp, IcmpCode, IcmpType};
 
-use crate::traceroute::{TracerouteError, TracerouteTerminal};
-
-mod bytes;
-mod traceroute;
-mod packet_utils;
+use traceroute_rust::{TracerouteError, TracerouteTerminal};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 #[command(name = "traceroute")]
 #[command(bin_name = "traceroute")]
-struct TracerouteOptions {
+pub struct TracerouteOptions {
     #[clap(required = true, index = 1)]
     host: String,
 
@@ -33,6 +27,7 @@ struct TracerouteOptions {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let traceroute_options = TracerouteOptions::parse();
+    
     let mut traceroute_terminal = match TracerouteTerminal::new(traceroute_options) {
         Ok(traceroute) => traceroute,
         Err(traceroute_error) => match traceroute_error {
@@ -41,14 +36,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
     };
+    
     traceroute_terminal.start();
-
-    Icmp {
-        icmp_type: IcmpType(8),
-        icmp_code: IcmpCode(0),
-        checksum: 0,
-        payload: vec![]
-    };
-
+    
     Ok(())
 }

@@ -1,4 +1,5 @@
 use libpacket::{ipv4::Ipv4, PrimitiveValues, udp::Udp};
+use crate::traceroute::IpDatagram;
 
 pub trait ToBytes {
     fn to_bytes(&self) -> Vec<u8>;
@@ -57,5 +58,14 @@ impl ToBytes for Udp {
         bytes.extend_from_slice(&self.payload);
 
         bytes
+    }
+}
+
+impl ToBytes for IpDatagram {
+    fn to_bytes(&self) -> Vec<u8> {
+        match self {
+            IpDatagram::V4(ipv4_datagram) => ipv4_datagram.to_bytes(),
+            IpDatagram::V6(ipv6_datagram) => todo!()
+        }
     }
 }
