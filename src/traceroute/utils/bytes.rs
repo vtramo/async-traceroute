@@ -2,7 +2,7 @@ use pnet::packet::{ipv4::Ipv4, PrimitiveValues, udp::Udp};
 use pnet::packet::icmp::Icmp;
 use pnet::packet::tcp::{Tcp, TcpOption};
 
-use crate::traceroute::IpDatagram;
+use crate::traceroute::utils::packet_utils::IpDatagram;
 
 pub trait ToBytes {
     fn to_bytes(&self) -> Vec<u8>;
@@ -68,7 +68,7 @@ impl ToBytes for IpDatagram {
     fn to_bytes(&self) -> Vec<u8> {
         match self {
             IpDatagram::V4(ipv4_datagram) => ipv4_datagram.to_bytes(),
-            IpDatagram::V6(ipv6_datagram) => todo!()
+            IpDatagram::V6(_ipv6_datagram) => todo!()
         }
     }
 }

@@ -6,13 +6,44 @@ use pnet::packet::FromPacket;
 use pnet::packet::icmp::{Icmp, IcmpCode, IcmpPacket, IcmpType};
 use pnet::packet::icmp::echo_request::{EchoRequest, EchoRequestPacket};
 use pnet::packet::ipv4::{Ipv4, Ipv4Packet};
+use pnet::packet::ipv6::Ipv6;
 use pnet::packet::tcp::{ipv4_checksum, Tcp, TcpOption, TcpPacket};
 use pnet::packet::udp::{Udp, UdpPacket};
 
-use crate::traceroute::IpDatagram;
 use crate::traceroute::utils::bytes::ToBytes;
 
 const TCP_SYN_ACK: u8 = 18;
+
+pub enum IpDatagram {
+    V4(Ipv4), V6(Ipv6)
+}
+
+impl IpDatagram {
+    pub const STANDARD_HEADER_LENGTH: u16 = 20;
+
+    pub fn set_payload(&mut self, data: &[u8]) {
+        let data_to_vec = data.to_vec();
+        match self {
+            IpDatagram::V4(ipv4_datagram) => {
+                ipv4_datagram.payload = data_to_vec;
+            },
+            IpDatagram::V6(ipv6_datagram) => {
+                ipv6_datagram.payload = data_to_vec;
+            }
+        }
+    }
+
+    pub fn set_length(&mut self, length: u16) {
+        match self {
+            IpDatagram::V4(ipv4_datagram) => {
+                ipv4_datagram.total_length = length;
+            },
+            IpDatagram::V6(ipv6_datagram) => {
+                ipv6_datagram.payload_length = length;
+            }
+        }
+    }
+}
 
 pub fn build_ipv4_datagram_from_bytes(data: &[u8]) -> Option<Ipv4> {
     let ipv4packet = Ipv4Packet::new(&data)?;
@@ -159,7 +190,7 @@ pub fn get_default_ipv4_addr_interface() -> Ipv4Addr {
     let ip_addr = ips.get(0).unwrap().ip(); // todo
     match ip_addr {
         IpAddr::V4(ipv4_addr) => ipv4_addr,
-        IpAddr::V6(ipv6_addr) => panic!("")
+        IpAddr::V6(_ipv6_addr) => panic!("")
     }
 }
 
@@ -169,7 +200,7 @@ pub fn get_default_ipv6_addr_interface() -> Ipv6Addr {
     let ips = &first_interface.ips;
     let ip_addr = ips.get(0).unwrap().ip();
     match ip_addr {
-        IpAddr::V4(ipv4_addr) => panic!(""),
+        IpAddr::V4(_ipv4_addr) => panic!(""), // todo
         IpAddr::V6(ipv6_addr) => ipv6_addr
     }
 }

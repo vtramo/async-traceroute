@@ -6,13 +6,12 @@ use tokio::join;
 use tokio::sync::oneshot;
 
 use traceroute_rust::traceroute::icmp_sniffer::IcmpProbeResponseSniffer;
-use traceroute_rust::traceroute::probe::parser::TcpProbeResponseParser;
-use traceroute_rust::traceroute::probe::ProbeResponseParser;
+use traceroute_rust::traceroute::probe::parser::{ProbeReplyParser, TcpProbeResponseParser};
 use traceroute_rust::traceroute::probe::task::{ProbeTask, TcpProbeTask};
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
-    let parser = TcpProbeResponseParser::new();
+    let parser = ProbeReplyParser::TCP(TcpProbeResponseParser);
     let ip_addr = IpAddr::V4(Ipv4Addr::from_str("216.58.204.238").unwrap());
 
     let mut icmp_sniffer = IcmpProbeResponseSniffer::new(parser)?;
@@ -54,7 +53,7 @@ async fn main() -> io::Result<()> {
 }
 
 fn generate_tcp_task(
-    icmp_probe_response_sniffer: &mut IcmpProbeResponseSniffer<TcpProbeResponseParser>,
+    icmp_probe_response_sniffer: &mut IcmpProbeResponseSniffer,
     ip_id: u16,
     ip_addr: &IpAddr,
     dest_port: u16,

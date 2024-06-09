@@ -2,21 +2,35 @@ use pnet::packet::icmp::echo_reply::EchoReplyPacket;
 use pnet::packet::icmp::Icmp;
 use pnet::packet::ipv4::Ipv4;
 
-use crate::traceroute::ProbeResponse;
+use crate::traceroute::probe::ProbeResponse;
 use crate::traceroute::utils::packet_utils;
 use crate::traceroute::utils::packet_utils::is_icmp_ttl_expired;
 
 pub trait ProbeResponseParser: Send {
-    fn new() -> Self;
     fn parse(&self, icmp_packet: &Icmp, ipv4_datagram: &Ipv4) -> Option<ProbeResponse>;
+}
+
+pub enum ProbeReplyParser {
+    UDP(UdpProbeResponseParser),
+    TCP(TcpProbeResponseParser),
+    ICMP(IcmpProbeResponseParser),
+}
+
+impl ProbeResponseParser for ProbeReplyParser {
+    fn parse(&self, icmp_packet: &Icmp, ipv4_datagram: &Ipv4) -> Option<ProbeResponse> {
+        match self {
+            ProbeReplyParser::UDP(udp_probe_response_parser) => 
+                udp_probe_response_parser.parse(icmp_packet, ipv4_datagram),
+            ProbeReplyParser::TCP(tcp_probe_response_parser) => 
+                tcp_probe_response_parser.parse(icmp_packet, ipv4_datagram),
+            ProbeReplyParser::ICMP(icmp_probe_response_parser) => 
+                icmp_probe_response_parser.parse(icmp_packet, ipv4_datagram),
+        }
+    }
 }
 
 pub struct UdpProbeResponseParser;
 impl ProbeResponseParser for UdpProbeResponseParser {
-    fn new() -> Self {
-        Self
-    }
-
     fn parse(&self, icmp_packet: &Icmp, ipv4_datagram: &Ipv4) -> Option<ProbeResponse> {
         if !packet_utils::is_icmp_ttl_expired(&icmp_packet) &&
             !packet_utils::is_icmp_destination_port_unreachable(&icmp_packet) {
@@ -36,10 +50,6 @@ impl ProbeResponseParser for UdpProbeResponseParser {
 pub struct TcpProbeResponseParser;
 
 impl ProbeResponseParser for TcpProbeResponseParser {
-    fn new() -> Self {
-        Self
-    }
-
     fn parse(&self, icmp_packet: &Icmp, ipv4_datagram: &Ipv4) -> Option<ProbeResponse> {
         if !packet_utils::is_icmp_ttl_expired(&icmp_packet) &&
             !packet_utils::is_icmp_destination_port_unreachable(&icmp_packet) {
@@ -59,10 +69,6 @@ impl ProbeResponseParser for TcpProbeResponseParser {
 pub struct IcmpProbeResponseParser;
 
 impl ProbeResponseParser for IcmpProbeResponseParser {
-    fn new() -> Self {
-        Self
-    }
-
     fn parse(&self, icmp_packet: &Icmp, ipv4_datagram: &Ipv4) -> Option<ProbeResponse> {
         let from_address = ipv4_datagram.source;
         if packet_utils::is_icmp_echo_reply(&icmp_packet) {

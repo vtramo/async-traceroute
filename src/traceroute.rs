@@ -1,10 +1,16 @@
-use std::net::Ipv4Addr;
-use std::time::Duration;
-
-use pnet::packet::ipv4::Ipv4;
-use pnet::packet::ipv6::Ipv6;
-
-// use crate::traceroute::probe::{TracerouteMethod, ProbeSender};
+use std::cell::RefCell;
+use std::cmp::min;
+use std::future::Future;
+use std::net::IpAddr;
+use std::pin::Pin;
+use std::sync::Arc;
+use async_stream::stream;
+use futures_core::stream::Stream;
+use tokio::select;
+use tokio::task::JoinSet;
+use crate::traceroute::icmp_sniffer::IcmpProbeResponseSniffer;
+use crate::traceroute::probe::generator::ProbeTaskGenerator;
+use crate::traceroute::probe::ProbeResult;
 
 pub(crate) mod terminal;
 pub mod icmp_sniffer;
@@ -18,114 +24,111 @@ pub enum TracerouteHopStatus {
     NoReply
 }
 
-#[derive(Clone, Debug)]
-pub struct ProbeResult {
-    pub id: String,
-    pub from_address: Ipv4Addr,
-    pub rtt: Duration
-}
-
 pub enum TracerouteError {
     HostnameNotResolved(String)
 }
 
-pub enum IpDatagram {
-    V4(Ipv4), V6(Ipv6)
+pub struct Traceroute {
+    ip_addr: IpAddr,
+    max_ttl: u8,
+    nqueries: u8,
+    sim_queries: u16,
+    max_wait_probe_ms: u64,
+    current_ttl: Box<RefCell<u8>>,
+    current_query: Box<RefCell<u8>>,
+    probe_task_generator: Box<RefCell<Box<dyn ProbeTaskGenerator>>>,
+    icmp_probe_response_sniffer: Arc<IcmpProbeResponseSniffer>,
 }
 
-impl IpDatagram {
-    pub const STANDARD_HEADER_LENGTH: u16 = 20;
+impl Traceroute {
+    pub fn new(
+        ip_addr: IpAddr,
+        max_ttl: u8,
+        nqueries: u8,
+        sim_queries: u16,
+        max_wait_probe_ms: u64,
+        probe_task_generator: Box<dyn ProbeTaskGenerator>,
+        icmp_probe_response_sniffer: IcmpProbeResponseSniffer
+    ) -> Self {
+        Self {
+            ip_addr,
+            max_ttl,
+            nqueries,
+            sim_queries: min(sim_queries, (max_ttl * nqueries) as u16),
+            max_wait_probe_ms,
+            current_ttl: Box::new(RefCell::new(1)),
+            current_query: Box::new(RefCell::new(1)),
+            probe_task_generator: Box::new(RefCell::new(probe_task_generator)),
+            icmp_probe_response_sniffer: Arc::new(icmp_probe_response_sniffer),
+        }
+    }
     
-    pub fn set_payload(&mut self, data: &[u8]) {
-        let data_to_vec = data.to_vec();
-        match self {
-            IpDatagram::V4(ipv4_datagram) => {
-                ipv4_datagram.payload = data_to_vec;
-            },
-            IpDatagram::V6(ipv6_datagram) => {
-                ipv6_datagram.payload = data_to_vec;
+    pub fn trace(self) -> impl Stream<Item = Result<ProbeResult, String>> {
+        let mut probe_tasks = JoinSet::new();
+
+        for _ in 0..self.sim_queries {
+            let probe_task = self.generate_probe_task(&self.icmp_probe_response_sniffer);
+            probe_tasks.spawn(probe_task);
+            self.increment_ttl_query_counter();
+        }
+        
+        let icmp_probe_response_sniffer = Arc::clone(&self.icmp_probe_response_sniffer);
+        tokio::spawn(async move {
+            icmp_probe_response_sniffer.sniff().await
+        });
+
+        let mut stop_send_probes = false;
+        stream! {
+            loop {
+                if *self.current_ttl.borrow() > self.max_ttl {
+                    stop_send_probes = true;
+                }
+    
+                select! {
+                    Some(Ok(probe_result)) = probe_tasks.join_next() => {
+                        yield probe_result;
+                        if !stop_send_probes {
+                            let probe_task = self.generate_probe_task(&self.icmp_probe_response_sniffer);
+                            self.increment_ttl_query_counter();
+                            probe_tasks.spawn(probe_task);
+                        }
+                    },
+                    else => break
+                }
             }
         }
     }
 
-    pub fn set_length(&mut self, length: u16) {
-        match self {
-            IpDatagram::V4(ipv4_datagram) => {
-                ipv4_datagram.total_length = length;
-            },
-            IpDatagram::V6(ipv6_datagram) => {
-                ipv6_datagram.payload_length = length;
+    fn generate_probe_task(
+        &self, 
+        icmp_probe_response_sniffer: &IcmpProbeResponseSniffer
+    ) -> Pin<Box<impl Future<Output=Result<ProbeResult, String>>>> {
+        
+        let mut probe_task_generator = self.probe_task_generator.borrow_mut();
+        match probe_task_generator.generate_probe_task(
+            self.ip_addr,
+            &icmp_probe_response_sniffer
+        ) {
+            Ok((_, mut probe_task)) => {
+                let current_ttl = *self.current_ttl.borrow();
+                let timeout = self.max_wait_probe_ms;
+                let probe_task_future = Box::pin(async move {
+                    probe_task.send_probe(current_ttl, timeout).await
+                });
+                
+                probe_task_future
             }
+            Err(_) => todo!()
         }
     }
-}
-// 
-// pub struct Traceroute {
-//     hops: u16,
-//     queries_per_hop: u16,
-//     traceroute_method: TracerouteMethod,
-//     channel: Sender<ProbeResult>,
-//     hops_by_id: HashMap<String, CompletableHop>,
-// }
-// 
-// impl Traceroute {
-//     const MAX_TTL_PACKETS_AT_ONCE: u16 = 10;
-// 
-//     pub fn new(
-//         hops: u16,
-//         queries_per_hop: u16,
-//         traceroute_method: TracerouteMethod,
-//         channel: Sender<ProbeResult>,
-//     ) -> Self {
-//         Self {
-//             hops,
-//             queries_per_hop,
-//             traceroute_method,
-//             channel,
-//             hops_by_id: HashMap::with_capacity(hops as usize)
-//         }
-//     }
-// 
-//     pub fn traceroute(mut self) -> Result<(), io::Error> {
-//         let (sender, receiver) = mpsc::channel();
-//         self.start_icmp_sniffer(sender);
-// 
-//         let mut ttl_packet_sender = self.traceroute_method.get_probe_sender();
-//         let mut ttl_counter = min(Self::MAX_TTL_PACKETS_AT_ONCE, self.hops * self.queries_per_hop);
-//         for ttl in 1..=ttl_counter {
-//             let hop = ttl_packet_sender.send(ttl as u8)?;
-//             self.hops_by_id.insert(hop.id.clone(), hop);
-//         }
-// 
-//         while let Ok(traceroute_hop_response) = receiver.recv() {
-//             ttl_counter += 1;
-//             ttl_packet_sender.send(ttl_counter as u8)?;
-//             let hop_response_id = &traceroute_hop_response.id;
-//             if let Some(hop) = self.hops_by_id.get_mut(hop_response_id) {
-//                 if let Some(hop_result) = hop.complete_query(traceroute_hop_response) {
-//                     self.channel.send(hop_result).unwrap(); // todo
-//                 }
-//             }
-//         }
-// 
-//         Ok(())
-//     }
-// 
-//     fn start_icmp_sniffer(&self, sender: Sender<ProbeResponse>) {
-//         let probe_response_builder = self.traceroute_method.get_probe_response_parser();
-//         let mut icmp_sniffer = match IcmpProbeResponseSniffer::new(sender, Box::new(probe_response_builder)) {
-//             Ok(icmp_sniffer) => icmp_sniffer,
-//             Err(_error) => panic!("Unable to start ICMP sniffer: {_error}")
-//         };
-// 
-//         thread::spawn(move || {
-//             icmp_sniffer.sniff()
-//         });
-//     }
-// }
 
-#[derive(Clone, Debug)]
-pub struct ProbeResponse {
-    id: String,
-    from_address: Ipv4Addr
+    fn increment_ttl_query_counter(&self) {
+        let mut current_query = self.current_query.borrow_mut();
+        *current_query += 1;
+        if *current_query > self.nqueries {
+            *current_query = 1;
+            let mut current_ttl = self.current_ttl.borrow_mut();
+            *current_ttl += 1;
+        }
+    }
 }

@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use rand::prelude::ThreadRng;
-use rand::Rng;
+use rand::{Rng, thread_rng};
 
 pub mod dns;
 pub mod bytes;
@@ -42,4 +42,9 @@ impl RandomUniquePort {
         self.generated_ports.insert(generated_port);
         generated_port
     }
+}
+
+pub fn generate_u16() -> u16 {
+    let mut rng = thread_rng();
+    rng.gen_range(0..=u16::MAX)
 }

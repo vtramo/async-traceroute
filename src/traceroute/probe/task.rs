@@ -1,12 +1,9 @@
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use mio::net::UdpSocket;
-use pnet::datalink;
-use pnet::datalink::interfaces;
-use pnet::packet::icmp::{checksum, IcmpPacket};
 use pnet::packet::ip::IpNextHeaderProtocols::{Icmp, Tcp, Udp};
 use pnet::packet::ipv4::Ipv4;
 use pnet::packet::ipv6::Ipv6;
@@ -14,40 +11,40 @@ use pnet::packet::tcp::Tcp;
 use rand::{Rng, thread_rng};
 use socket2::{Domain, Protocol, Type};
 use tokio::select;
-use tokio::time::{sleep, timeout};
+use tokio::time::sleep;
 
-use crate::traceroute::{IpDatagram, ProbeResponse, ProbeResult};
+use crate::traceroute::probe::{CompletableProbe, ProbeId, ProbeResponse, ProbeResult};
 use crate::traceroute::tokio_socket::AsyncTokioSocket;
 use crate::traceroute::utils::bytes::ToBytes;
 use crate::traceroute::utils::packet_utils;
-use crate::traceroute::utils::packet_utils::{build_icmpv4_echo_request, get_default_ipv4_addr_interface, get_default_ipv6_addr_interface, icmpv4_checksum, internet_checksum};
+use crate::traceroute::utils::packet_utils::{build_icmpv4_echo_request, get_default_ipv4_addr_interface, get_default_ipv6_addr_interface, icmpv4_checksum, internet_checksum, IpDatagram};
 
 pub type ProbeResponseReceiver = tokio::sync::oneshot::Receiver<ProbeResponse>;
 
 #[async_trait]
-pub trait ProbeTask {
+pub trait ProbeTask: Send {
     async fn send_probe(
-        mut self,
+        &mut self,
         ttl: u8,
         timeout_ms: u64,
     ) -> Result<ProbeResult, String>;
 
-    fn get_probe_id(&self) -> String;
+    fn get_probe_id(&self) -> ProbeId;
 }
 
 pub struct UdpProbeTask {
-    id: String,
+    id: ProbeId,
     socket: AsyncTokioSocket,
     destination_address: IpAddr,
     destination_port: u16,
-    probe_response_receiver: ProbeResponseReceiver,
+    probe_response_receiver: Option<ProbeResponseReceiver>,
     ip_id_offset: u16,
 }
 
 #[async_trait]
 impl ProbeTask for UdpProbeTask {
     async fn send_probe(
-        mut self,
+        &mut self,
         ttl: u8,
         timeout_ms: u64,
     ) -> Result<ProbeResult, String> {
@@ -55,13 +52,18 @@ impl ProbeTask for UdpProbeTask {
 
         let timer = sleep(Duration::from_millis(timeout_ms));
 
+        let probe_response_receiver = match self.probe_response_receiver.take() {
+            None => return Err("This task has already been started!".to_string()),
+            Some(probe_response_receiver) => probe_response_receiver
+        };
+        
         let probe_result =
             select! {
                 _ = timer => {
                     println!("timeout");
                     Err("timeout")
                 },
-                Ok(probe_response) = self.probe_response_receiver => {
+                Ok(probe_response) = probe_response_receiver => {
                     if let Some(probe_result) = completable_hop.complete(probe_response) {
                         println!("{:?}", probe_result);
                         Ok(probe_result)
@@ -75,7 +77,7 @@ impl ProbeTask for UdpProbeTask {
         Ok(probe_result)
     }
 
-    fn get_probe_id(&self) -> String {
+    fn get_probe_id(&self) -> ProbeId {
         self.id.clone()
     }
 }
@@ -97,7 +99,7 @@ impl UdpProbeTask {
             )?,
             destination_address,
             destination_port,
-            probe_response_receiver,
+            probe_response_receiver: Some(probe_response_receiver),
             ip_id_offset: thread_rng().gen_range(0..32232)
         })
     }
@@ -168,18 +170,18 @@ impl UdpProbeTask {
 }
 
 pub struct TcpProbeTask {
-    id: String,
+    id: ProbeId,
     ip_id: u16,
     socket: AsyncTokioSocket,
     destination_address: IpAddr,
     destination_port: u16,
-    probe_response_receiver: ProbeResponseReceiver,
+    probe_response_receiver: Option<ProbeResponseReceiver>,
 }
 
 #[async_trait]
 impl ProbeTask for TcpProbeTask {
     async fn send_probe(
-        mut self, 
+        &mut self,
         ttl: u8, 
         timeout_ms: u64
     ) -> Result<ProbeResult, String> {
@@ -187,13 +189,18 @@ impl ProbeTask for TcpProbeTask {
 
         let timer = sleep(Duration::from_millis(timeout_ms));
 
+        let probe_response_receiver = match self.probe_response_receiver.take() {
+            None => return Err("This task has already been started!".to_string()),
+            Some(probe_response_receiver) => probe_response_receiver
+        };
+        
         let probe_result =
             select! {
                 _ = timer => {
                     println!("timeout"); // todo(): errori
                     Err("timeout")
                 },
-                Ok(probe_response) = self.probe_response_receiver => {
+                Ok(probe_response) = probe_response_receiver => {
                     if let Some(probe_result) = completable_hop.complete(probe_response) {
                         println!("{:?}", probe_result);
                         Ok(probe_result)
@@ -206,7 +213,7 @@ impl ProbeTask for TcpProbeTask {
                     let from_address = ipv4_datagram.source;
                     
                     let probe_response = ProbeResponse { 
-                        id: self.id,
+                        id: self.id.clone(),
                         from_address,
                     };
                     
@@ -223,7 +230,7 @@ impl ProbeTask for TcpProbeTask {
         Ok(probe_result)
     }
 
-    fn get_probe_id(&self) -> String {
+    fn get_probe_id(&self) -> ProbeId {
         self.id.clone()
     }
 }
@@ -247,7 +254,7 @@ impl TcpProbeTask {
             )?,
             destination_address,
             destination_port,
-            probe_response_receiver,
+            probe_response_receiver: Some(probe_response_receiver),
         })
     }
 
@@ -355,28 +362,37 @@ impl TcpProbeTask {
 }
 
 pub struct IcmpProbeTask {
-    id: String,
+    id: ProbeId,
     icmp_id: u16,
     icmp_sqn: u16,
     socket: AsyncTokioSocket,
     destination_address: IpAddr,
-    probe_response_receiver: ProbeResponseReceiver,
+    probe_response_receiver: Option<ProbeResponseReceiver>,
 }
 
 #[async_trait]
 impl ProbeTask for IcmpProbeTask {
-    async fn send_probe(self, ttl: u8, timeout_ms: u64) -> Result<ProbeResult, String> {
+    async fn send_probe(
+        &mut self, 
+        ttl: u8, 
+        timeout_ms: u64
+    ) -> Result<ProbeResult, String> {
         let mut completable_hop = self.send_ping(ttl).await.unwrap(); // todo()
 
         let timer = sleep(Duration::from_millis(timeout_ms));
 
+        let probe_response_receiver = match self.probe_response_receiver.take() {
+            None => return Err("This task has already been started!".to_string()),
+            Some(probe_response_receiver) => probe_response_receiver
+        };
+        
         let probe_result =
             select! {
                 _ = timer => {
                     println!("timeout");
                     Err("timeout")
                 },
-                Ok(probe_response) = self.probe_response_receiver => {
+                Ok(probe_response) = probe_response_receiver => {
                     if let Some(probe_result) = completable_hop.complete(probe_response) {
                         println!("{:?}", probe_result);
                         Ok(probe_result)
@@ -390,7 +406,7 @@ impl ProbeTask for IcmpProbeTask {
         Ok(probe_result)
     }
 
-    fn get_probe_id(&self) -> String {
+    fn get_probe_id(&self) -> ProbeId {
         self.id.clone()
     }
 }
@@ -414,7 +430,7 @@ impl IcmpProbeTask {
                 }
             )?,
             destination_address,
-            probe_response_receiver,
+            probe_response_receiver: Some(probe_response_receiver),
         })
     }
 
@@ -478,37 +494,5 @@ impl IcmpProbeTask {
 
     fn build_empty_ipv6_datagram(_ttl: u8, _destination_address: Ipv6Addr) -> Ipv6 {
         todo!()
-    }
-}
-
-pub struct CompletableProbe {
-    id: String,
-    sent_at: Instant,
-    probe_result: Option<ProbeResult>,
-}
-
-impl CompletableProbe {
-    pub fn new(id: &str) -> Self {
-        Self {
-            id: id.to_string(),
-            sent_at: Instant::now(),
-            probe_result: None,
-        }
-    }
-
-    pub fn complete(&mut self, probe_response: ProbeResponse) -> Option<ProbeResult> {
-        if probe_response.id != self.id {
-            return None;
-        }
-
-        if let Some(probe_result) = &self.probe_result {
-            return Some(probe_result.clone());
-        }
-
-        Some(ProbeResult {
-            id: probe_response.id,
-            from_address: probe_response.from_address,
-            rtt: self.sent_at.elapsed()
-        })
     }
 }

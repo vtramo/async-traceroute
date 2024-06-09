@@ -1,15 +1,5 @@
-use std::collections::HashMap;
-use std::fmt::{Display, Formatter};
-use std::net::{IpAddr, Ipv4Addr};
-use std::sync::mpsc;
-use std::sync::mpsc::Receiver;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::fmt::Display;
 
-// use crate::traceroute::{Traceroute, ProbeResult, TracerouteHopStatus};
-use crate::traceroute::TracerouteHopStatus::{Completed, NoReply, PartiallyCompleted};
-use crate::traceroute::utils::dns;
-use crate::TracerouteError;
 // 
 // pub struct TracerouteDisplayableHop {
 //     id: u16,
