@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 clap = { version = "4.5.4", features = ["derive"] }
-libpacket = "0.1.2"
+pnet="0.35.0"
 rand = "0.8.5"
 socket2 = { version = "0.5.7", features = ["all"] }
 tokio = { version = "1.38.0", features = ["full"] }

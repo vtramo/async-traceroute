@@ -1,4 +1,7 @@
-use libpacket::{ipv4::Ipv4, PrimitiveValues, udp::Udp};
+use pnet::packet::{ipv4::Ipv4, PrimitiveValues, udp::Udp};
+use pnet::packet::icmp::Icmp;
+use pnet::packet::tcp::{Tcp, TcpOption};
+
 use crate::traceroute::IpDatagram;
 
 pub trait ToBytes {
@@ -69,3 +72,56 @@ impl ToBytes for IpDatagram {
         }
     }
 }
+
+impl ToBytes for Tcp {
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes: Vec<u8> = Vec::with_capacity((self.data_offset * 4) as usize);
+
+        bytes.extend_from_slice(self.source.to_be_bytes().as_ref());
+        bytes.extend_from_slice(self.destination.to_be_bytes().as_ref());
+        bytes.extend_from_slice(self.sequence.to_be_bytes().as_ref());
+        bytes.extend_from_slice(self.acknowledgement.to_be_bytes().as_ref());
+
+        let data_offset_then_reserved_then_flags: u16
+            = ((self.data_offset as u16) << 12) ^
+              ((self.reserved as u16) << 9)     ^
+              (self.flags as u16);
+        bytes.extend_from_slice(data_offset_then_reserved_then_flags.to_be_bytes().as_ref());
+
+        bytes.extend_from_slice(self.window.to_be_bytes().as_ref());
+        bytes.extend_from_slice(self.checksum.to_be_bytes().as_ref());
+        bytes.extend_from_slice(self.urgent_ptr.to_be_bytes().as_ref());
+
+        let tcp_options_bytes: Vec<_> = self.options
+            .iter()
+            .flat_map(|tcp_option| tcp_option.to_bytes())
+            .collect();
+
+        bytes.extend(tcp_options_bytes);
+        bytes.extend_from_slice(self.payload.as_ref());
+        
+        bytes
+    }
+}
+
+impl ToBytes for TcpOption {
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes: Vec<u8> = Vec::with_capacity(12);
+        bytes.push(self.number.0);
+        bytes.extend(&self.length);
+        bytes.extend(&self.data);
+        bytes
+    }
+}
+
+impl ToBytes for Icmp {
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes: Vec<u8> = Vec::with_capacity(12);
+        bytes.push(self.icmp_type.0);
+        bytes.push(self.icmp_code.0);
+        bytes.extend_from_slice(self.checksum.to_be_bytes().as_ref());
+        bytes.extend_from_slice(self.payload.as_ref());
+        bytes
+    }
+}
+

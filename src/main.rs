@@ -2,7 +2,7 @@ use std::error::Error;
 
 use clap::Parser;
 
-use traceroute_rust::{TracerouteError, TracerouteTerminal};
+// use traceroute_rust::{TracerouteError, TracerouteTerminal};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -26,18 +26,18 @@ pub struct TracerouteOptions {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let traceroute_options = TracerouteOptions::parse();
-    
-    let mut traceroute_terminal = match TracerouteTerminal::new(traceroute_options) {
-        Ok(traceroute) => traceroute,
-        Err(traceroute_error) => match traceroute_error {
-            TracerouteError::HostnameNotResolved(hostname) => {
-                panic!("{hostname}: Temporary failure in name resolution");
-            }
-        }
-    };
-    
-    traceroute_terminal.start();
-    
+    // let traceroute_options = TracerouteOptions::parse();
+    // 
+    // let mut traceroute_terminal = match TracerouteTerminal::new(traceroute_options) {
+    //     Ok(traceroute) => traceroute,
+    //     Err(traceroute_error) => match traceroute_error {
+    //         TracerouteError::HostnameNotResolved(hostname) => {
+    //             panic!("{hostname}: Temporary failure in name resolution");
+    //         }
+    //     }
+    // };
+    // 
+    // traceroute_terminal.start();
+    // 
     Ok(())
 }

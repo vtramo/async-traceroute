@@ -1,39 +1,40 @@
+use std::collections::HashMap;
 use std::io;
-use std::mem::MaybeUninit;
 use std::net::Shutdown;
-use std::sync::mpsc::Sender;
 
-use socket2::{Domain, Protocol, Socket, Type};
+use socket2::{Domain, Protocol, Type};
 
-use crate::traceroute::methods::TracerouteProbeResponseBuilder;
-use crate::traceroute::TracerouteProbeResponse;
+use crate::traceroute::probe::ProbeResponseParser;
+use crate::traceroute::ProbeResponse;
+use crate::traceroute::tokio_socket::AsyncTokioSocket;
 use crate::traceroute::utils::packet_utils;
 
-pub struct TracerouteIcmpSniffer {
-    socket: Socket,
-    buffer: [MaybeUninit<u8>; TracerouteIcmpSniffer::BUFFER_SIZE],
-    channel: Sender<TracerouteProbeResponse>,
-    probe_response_builder: Box<dyn TracerouteProbeResponseBuilder>,
+
+pub type ProbeResponseSender = tokio::sync::oneshot::Sender<ProbeResponse>;
+
+
+pub struct IcmpProbeResponseSniffer<T: ProbeResponseParser> {
+    socket: AsyncTokioSocket,
+    buffer: [u8; 1024],
+    oneshot_channels_by_probe_id: HashMap<String, ProbeResponseSender>,
+    probe_response_parser: T,
     is_sniffing: bool,
 }
 
-impl TracerouteIcmpSniffer {
-    const BUFFER_SIZE: usize = 128;
+impl<T: ProbeResponseParser> IcmpProbeResponseSniffer<T> {
+    const BUFFER_SIZE: usize = 1024;
     
-    pub fn new(
-        channel: Sender<TracerouteProbeResponse>, 
-        probe_response_builder: Box<dyn TracerouteProbeResponseBuilder>,
-    ) -> io::Result<Self> {
-        Ok(TracerouteIcmpSniffer {
-            socket: Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4))?,
-            buffer: [MaybeUninit::new(0); TracerouteIcmpSniffer::BUFFER_SIZE],
-            channel,
-            probe_response_builder,
+    pub fn new(probe_response_parser: T) -> io::Result<Self> {
+        Ok(IcmpProbeResponseSniffer {
+            socket: AsyncTokioSocket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4))?,
+            buffer: [0u8; 1024],
+            oneshot_channels_by_probe_id: HashMap::with_capacity(120),
+            probe_response_parser,
             is_sniffing: false,
         })
     }
 
-    pub fn sniff(&mut self) {
+    pub async fn sniff(&mut self) {
         if self.is_sniffing {
             panic!("The sniffer is already listening!");
         }
@@ -41,8 +42,8 @@ impl TracerouteIcmpSniffer {
         self.is_sniffing = true;
 
         while self.is_sniffing {
-            let data = match self.socket.recv_from(&mut self.buffer) {
-                Ok(_) => self.map_buffer_to_vec_u8(),
+            let data = match self.socket.recv(&mut self.buffer).await {
+                Ok(_) => self.buffer.to_vec(),
                 Err(_) => break,
             };
 
@@ -55,27 +56,27 @@ impl TracerouteIcmpSniffer {
                 Some(ipv4_datagram) => ipv4_datagram,
                 None => continue,
             };
-
-            if !packet_utils::is_icmp_ttl_expired(&icmp_packet) &&
-                !packet_utils::is_icmp_destination_port_unreachable(&icmp_packet) {
-                continue;
-            }
             
-            if let Some(traceroute_probe_response) 
-                = self.probe_response_builder.build_probe_response(&icmp_packet, &ipv4_datagram) {
+            if let Some(probe_response)
+                = self.probe_response_parser.parse(&icmp_packet, &ipv4_datagram) {
                 
-                self.channel
-                    .send(traceroute_probe_response)
-                    .expect("The channel should be available after you start sniffing!");
+                if let Some(oneshot_channel) 
+                    = self.oneshot_channels_by_probe_id.remove(&probe_response.id) {
+                    
+                    let _ = oneshot_channel.send(probe_response);
+                }
             }
         }
     }
-
-    fn map_buffer_to_vec_u8(&self) -> Vec<u8> {
-        self.buffer
-            .iter()
-            .map(|maybe_uninit| unsafe { maybe_uninit.assume_init_read() })
-            .collect()
+    
+    pub fn register_probe(&mut self, probe_id: String, probe_response_sender: ProbeResponseSender) -> bool {
+        if self.oneshot_channels_by_probe_id.contains_key(&probe_id) {
+            return false;
+        }
+        
+        self.oneshot_channels_by_probe_id.insert(probe_id, probe_response_sender);
+        
+        return true;
     }
     
     pub fn stop(&mut self) -> io::Result<()> {
