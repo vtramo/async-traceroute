@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  async-rust-icmp:
+    image: traceroute-rust-tokio
+    container_name: traceroute-rust-tokio
+    privileged: true
+    cap_add:
+      - NET_RAW
+    deploy:
+      resources:
+        limits:
+          cpus: 1.0
