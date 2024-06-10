@@ -8,6 +8,7 @@ use mio::unix::SourceFd;
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use tokio::io::Interest;
 use tokio::io::unix::AsyncFd;
+use tokio::sync::mpsc::Receiver;
 
 /// An ICMP socket used with `tokio` events.
 #[derive(Clone)]
@@ -48,6 +49,12 @@ impl AsyncTokioSocket {
             .await
     }
 
+    pub async fn send(&self, buf: &[u8]) -> io::Result<usize> {
+        self.socket
+            .async_io(Interest::WRITABLE, |socket| socket.send(buf))
+            .await
+    }
+    
     pub async fn recv(&self, buf: &mut [u8]) -> io::Result<usize> {
         self.socket
             .async_io(Interest::READABLE, |socket| socket.recv(buf))
@@ -166,5 +173,34 @@ impl Source for MioTokioSocket {
 impl AsRawFd for MioTokioSocket {
     fn as_raw_fd(&self) -> RawFd {
         self.socket.as_raw_fd()
+    }
+}
+
+pub struct SharedAsyncTokioSocket {
+    socket: AsyncTokioSocket,
+    rx: Receiver<(Vec<u8>, SocketAddr)>,
+}
+
+impl SharedAsyncTokioSocket {
+    pub fn new(
+        domain: Domain,
+        ty: Type,
+        protocol: Option<Protocol>,
+        rx: Receiver<(Vec<u8>, SocketAddr)>,
+    ) -> io::Result<Self> {
+        Ok(Self {
+            socket: AsyncTokioSocket::new(domain, ty, protocol)?,
+            rx
+        })
+    }
+
+    pub async fn share(&mut self) {
+        while let Some((bytes, socket_addr)) = self.rx.recv().await {
+            self.socket.send_to(&bytes, socket_addr).await.expect("TODO: panic message");
+        }
+    }
+
+    pub fn set_header_included(&mut self, value: bool) -> io::Result<()> {
+        self.socket.set_header_included(value)
     }
 }
