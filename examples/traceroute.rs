@@ -38,7 +38,7 @@ async fn main() -> io::Result<()> {
     let traceroute_stream= traceroute.trace();
     pin_mut!(traceroute_stream);
     
-    while let Some(Ok(probe_result)) = traceroute_stream.next().await {
+    while let Some(probe_result) = traceroute_stream.next().await {
         println!("{:?}", probe_result);
     }
 

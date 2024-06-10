@@ -1,9 +1,8 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io;
 use std::net::Shutdown;
 use std::ops::DerefMut;
-use std::sync::{Arc, LockResult, Mutex};
+use std::sync::Mutex;
 
 use socket2::{Domain, Protocol, Type};
 
@@ -41,7 +40,7 @@ impl IcmpProbeResponseSniffer {
 
         self.set_is_sniffing(true);
         
-        let mut buffer = [0u8; 1024];
+        let mut buffer = [0u8; Self::BUFFER_SIZE];
         while self.is_sniffing() {
             let data = match self.socket.recv(&mut buffer).await {
                 Ok(_) => buffer.to_vec(),

@@ -1,10 +1,9 @@
 use std::io;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use mio::net::UdpSocket;
-use pnet::packet::ip::IpNextHeaderProtocols::{Icmp, Tcp, Udp};
+use pnet::packet::ip::IpNextHeaderProtocols::{Icmp, Tcp};
 use pnet::packet::ipv4::Ipv4;
 use pnet::packet::ipv6::Ipv6;
 use pnet::packet::tcp::Tcp;
@@ -14,7 +13,7 @@ use tokio::select;
 use tokio::sync::mpsc::Sender;
 use tokio::time::sleep;
 
-use crate::traceroute::probe::{CompletableProbe, ProbeId, ProbeResponse, ProbeResult};
+use crate::traceroute::probe::{CompletableProbe, ProbeError, ProbeId, ProbeResponse, ProbeResult};
 use crate::traceroute::tokio_socket::AsyncTokioSocket;
 use crate::traceroute::utils::bytes::ToBytes;
 use crate::traceroute::utils::packet_utils;
@@ -28,7 +27,7 @@ pub trait ProbeTask: Send {
         &mut self,
         ttl: u8,
         timeout_ms: u64,
-    ) -> Result<ProbeResult, String>;
+    ) -> Result<ProbeResult, ProbeError>;
 
     fn get_probe_id(&self) -> ProbeId;
 }
@@ -39,7 +38,6 @@ pub struct UdpProbeTask {
     destination_address: IpAddr,
     destination_port: u16,
     probe_response_receiver: Option<ProbeResponseReceiver>,
-    ip_id_offset: u16,
 }
 
 #[async_trait]
@@ -48,28 +46,30 @@ impl ProbeTask for UdpProbeTask {
         &mut self,
         ttl: u8,
         timeout_ms: u64,
-    ) -> Result<ProbeResult, String> {
-        let mut completable_hop = self.send_udp_probe(ttl).await.unwrap(); // todo()
+    ) -> Result<ProbeResult, ProbeError> {
+        let mut completable_hop = match self.send_udp_probe(ttl).await {
+            Ok(completable_hop) => completable_hop,
+            Err(io_error) => return Err(ProbeError::IoError { ttl, io_error: Some(io_error) })
+        };
 
         let timer = sleep(Duration::from_millis(timeout_ms));
 
         let probe_response_receiver = match self.probe_response_receiver.take() {
-            None => return Err("This task has already been started!".to_string()),
+            None => return Err(ProbeError::IoError { ttl, io_error: None }),
             Some(probe_response_receiver) => probe_response_receiver
         };
         
         let probe_result =
             select! {
                 _ = timer => {
-                    eprintln!("timeout");
-                    Err("timeout")
+                    println!("timeout");
+                    Err(ProbeError::Timeout { ttl })
                 },
                 Ok(probe_response) = probe_response_receiver => {
                     if let Some(probe_result) = completable_hop.complete(probe_response) {
                         Ok(probe_result)
                     } else {
-                        eprintln!("Bad Probe Result");
-                        Err("Bad Probe Result")
+                        Err(ProbeError::IoError { ttl, io_error: None })
                     }
                 },
             }?;
@@ -100,7 +100,6 @@ impl UdpProbeTask {
             destination_address,
             destination_port,
             probe_response_receiver: Some(probe_response_receiver),
-            ip_id_offset: thread_rng().gen_range(0..32232)
         })
     }
 
@@ -110,54 +109,13 @@ impl UdpProbeTask {
     }
 
     async fn send_udp_probe(&self, ttl: u8) -> io::Result<CompletableProbe> {
-        let completable_probe = CompletableProbe::new(&self.get_probe_id());
+        let completable_probe = CompletableProbe::new(&self.get_probe_id(), ttl);
 
         self.socket.set_ttl(ttl as u32)?;
         let socket_addr = SocketAddr::new(self.destination_address, self.destination_port);
         self.socket.send_to(&[], socket_addr).await?;
 
         Ok(completable_probe)
-    }
-
-    fn get_unused_source_port(&self) -> io::Result<u16> {
-        let udp_socket = UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)))?;
-        let local_addr = udp_socket.local_addr()?;
-        Ok(local_addr.port())
-    }
-
-    fn build_empty_ip_datagram(&self, ttl: u8) -> IpDatagram {
-        match self.destination_address {
-            IpAddr::V4(ipv4_address) => {
-                IpDatagram::V4(self.build_empty_ipv4_datagram(ttl, ipv4_address))
-            },
-            IpAddr::V6(ipv6_address) => {
-                IpDatagram::V6(Self::build_empty_ipv6_datagram(ttl, ipv6_address))
-            }
-        }
-    }
-
-    fn build_empty_ipv4_datagram(&self, ttl: u8, destination_address: Ipv4Addr) -> Ipv4 {
-        Ipv4 {
-            version: 4,
-            header_length: 5,
-            dscp: 0,
-            ecn: 0,
-            total_length: 28,
-            identification: self.ip_id_offset + ttl as u16,
-            flags: 0,
-            fragment_offset: 0,
-            ttl,
-            next_level_protocol: Udp,
-            checksum: 0,
-            source: Ipv4Addr::UNSPECIFIED,
-            destination: destination_address,
-            options: vec![],
-            payload: vec![]
-        }
-    }
-
-    fn build_empty_ipv6_datagram(_ttl: u8, _destination_address: Ipv6Addr) -> Ipv6 {
-        todo!()
     }
 }
 
@@ -176,31 +134,32 @@ impl ProbeTask for TcpProbeTask {
         &mut self,
         ttl: u8, 
         timeout_ms: u64
-    ) -> Result<ProbeResult, String> {
-        let mut completable_hop = self.send_tcp_probe(ttl).await.unwrap(); // todo()
+    ) -> Result<ProbeResult, ProbeError> {
+        let mut completable_hop = match self.send_tcp_probe(ttl).await {
+            Ok(completable_hop) => completable_hop,
+            Err(io_error) => return Err(ProbeError::IoError { ttl, io_error: Some(io_error) })
+        };
 
         let timer = sleep(Duration::from_millis(timeout_ms));
 
         let probe_response_receiver = match self.probe_response_receiver.take() {
-            None => return Err("This task has already been started!".to_string()),
+            None => return Err(ProbeError::IoError { ttl, io_error: None }),
             Some(probe_response_receiver) => probe_response_receiver
         };
         
         let probe_result =
             select! {
                 _ = timer => {
-                    eprintln!("timeout"); // todo(): errori
-                    Err("timeout")
+                    Err(ProbeError::Timeout { ttl })
                 },
                 Ok(probe_response) = probe_response_receiver => {
                     if let Some(probe_result) = completable_hop.complete(probe_response) {
                         Ok(probe_result)
                     } else {
-                        eprintln!("Bad Probe Result");
-                        Err("Bad Probe Result")
+                        Err(ProbeError::IoError { ttl, io_error: None })
                     }
                 },
-                (ipv4_datagram, _) = Self::wait_syn_ack(&self.socket) => {
+                Ok((ipv4_datagram, _)) = Self::wait_syn_ack(&self.socket) => {
                     let from_address = ipv4_datagram.source;
                     
                     let probe_response = ProbeResponse { 
@@ -208,12 +167,11 @@ impl ProbeTask for TcpProbeTask {
                         from_address,
                     };
                     
-                    let probe_result = completable_hop
-                        .complete(probe_response)
-                        .expect("");
-                    
-                    println!("TCP SYN ACK!! {:?}", probe_result);
-                    
+                    let probe_result = match completable_hop.complete(probe_response) {
+                        None => return Err(ProbeError::IoError { ttl, io_error: None }),
+                        Some(probe_result) => probe_result
+                    };
+
                     Ok(probe_result)
                 },
             }?;
@@ -256,7 +214,7 @@ impl TcpProbeTask {
     }
 
     async fn send_tcp_probe(&self, ttl: u8) -> io::Result<CompletableProbe> {
-        let completable_probe = CompletableProbe::new(&self.get_probe_id());
+        let completable_probe = CompletableProbe::new(&self.get_probe_id(), ttl);
 
         let source_port = Self::generate_source_port();
         let isn = Self::generate_isn();
@@ -327,26 +285,23 @@ impl TcpProbeTask {
         todo!()
     }
     
-    async fn wait_syn_ack(socket: &AsyncTokioSocket) -> (Ipv4, Tcp){
+    async fn wait_syn_ack(socket: &AsyncTokioSocket) -> io::Result<(Ipv4, Tcp)> {
         let mut buffer = [0u8; 1024];
         loop {
-            match socket.recv(&mut buffer).await {
-                Err(_) | Ok(0) => sleep(Duration::MAX).await,
-                Ok(_) => {
-                    let ipv4_datagram = match packet_utils::build_ipv4_datagram_from_bytes(&buffer) {
-                        Some(ipv4_datagram) => ipv4_datagram,
-                        None => continue,
-                    };
-                    
-                    let tcp_segment = match packet_utils::build_tcp_segment_from_bytes(&ipv4_datagram.payload) {
-                        Some(tcp_segment) => tcp_segment,
-                        None => continue,
-                    };
- 
-                    if packet_utils::is_tcp_syn_ack_segment(&tcp_segment) {
-                        break (ipv4_datagram, tcp_segment);
-                    }
-                }
+            socket.recv(&mut buffer).await?;
+
+            let ipv4_datagram = match packet_utils::build_ipv4_datagram_from_bytes(&buffer) {
+                Some(ipv4_datagram) => ipv4_datagram,
+                None => continue,
+            };
+
+            let tcp_segment = match packet_utils::build_tcp_segment_from_bytes(&ipv4_datagram.payload) {
+                Some(tcp_segment) => tcp_segment,
+                None => continue,
+            };
+
+            if packet_utils::is_tcp_syn_ack_segment(&tcp_segment) {
+                break Ok((ipv4_datagram, tcp_segment));
             }
         }
     }
@@ -367,34 +322,26 @@ impl ProbeTask for IcmpProbeTask {
         &mut self, 
         ttl: u8, 
         timeout_ms: u64
-    ) -> Result<ProbeResult, String> {
-        let mut completable_hop = match self.send_ping(ttl).await {
-            Ok(completable_probe) => completable_probe,
-            Err(error) => {
-                eprintln!("{:?}", error);
-                return Err(error.to_string())
-            },
-        };
+    ) -> Result<ProbeResult, ProbeError> {
+        let mut completable_hop =  self.send_ping(ttl).await?;
 
         let timer = sleep(Duration::from_millis(timeout_ms));
 
         let probe_response_receiver = match self.probe_response_receiver.take() {
-            None => return Err("This task has already been started!".to_string()),
+            None => return Err(ProbeError::IoError { ttl, io_error: None }),
             Some(probe_response_receiver) => probe_response_receiver
         };
         
         let probe_result =
             select! {
                 _ = timer => {
-                    eprintln!("timeout");
-                    Err("timeout")
+                    Err(ProbeError::Timeout { ttl })
                 },
                 Ok(probe_response) = probe_response_receiver => {
                     if let Some(probe_result) = completable_hop.complete(probe_response) {
                         Ok(probe_result)
                     } else {
-                        eprintln!("Bad Probe Result");
-                        Err("Bad Probe Result")
+                        Err(ProbeError::IoError { ttl, io_error: None })
                     }
                 },
             }?;
@@ -425,8 +372,8 @@ impl IcmpProbeTask {
         }
     }
     
-    async fn send_ping(&self, ttl: u8) -> Result<CompletableProbe, String> {
-        let completable_probe = CompletableProbe::new(&self.get_probe_id());
+    async fn send_ping(&self, ttl: u8) -> Result<CompletableProbe, ProbeError> {
+        let completable_probe = CompletableProbe::new(&self.get_probe_id(), ttl);
         
         let mut echo_request = build_icmpv4_echo_request(self.icmp_id, self.icmp_sqn);
         echo_request.checksum = icmpv4_checksum(&echo_request);
@@ -438,11 +385,11 @@ impl IcmpProbeTask {
 
         let socket_addr = SocketAddr::new(self.destination_address, 1234);
         let ip_datagram_bytes = ip_datagram.to_bytes();
-        self.tx_to_icmp_raw_socket
-            .send((ip_datagram_bytes, socket_addr))
-            .await
-            .expect("Should be always open!");
-        
+        match self.tx_to_icmp_raw_socket.send((ip_datagram_bytes, socket_addr)).await {
+            Ok(_) => (),
+            Err(_) => return Err(ProbeError::IoError { ttl, io_error: None }),
+        };
+
         Ok(completable_probe)
     }
     

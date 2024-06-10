@@ -10,7 +10,7 @@ use tokio::select;
 use tokio::task::JoinSet;
 use crate::traceroute::icmp_sniffer::IcmpProbeResponseSniffer;
 use crate::traceroute::probe::generator::ProbeTaskGenerator;
-use crate::traceroute::probe::ProbeResult;
+use crate::traceroute::probe::{ProbeError, ProbeResult};
 
 pub(crate) mod terminal;
 pub mod icmp_sniffer;
@@ -63,7 +63,7 @@ impl Traceroute {
         }
     }
     
-    pub fn trace(self) -> impl Stream<Item = Result<ProbeResult, String>> {
+    pub fn trace(self) -> impl Stream<Item = Result<ProbeResult, ProbeError>> {
         let mut probe_tasks = JoinSet::new();
 
         for _ in 0..self.sim_queries {
@@ -87,22 +87,25 @@ impl Traceroute {
     
                 select! {
                     Some(Ok(probe_result)) = probe_tasks.join_next() => {
-                        if let Ok(ok_probe_result) = &probe_result {
-                            if ok_probe_result.from_address() == self.target_ip_address {
-                                target_address_encountered_counter += 1;
-                                if target_address_encountered_counter >= self.nqueries {
-                                    yield probe_result;
-                                    break;
+                        match probe_result {
+                            Ok(probe_result) => {
+                                if probe_result.from_address() == self.target_ip_address {
+                                    target_address_encountered_counter += 1;
+                                    if target_address_encountered_counter >= self.nqueries {
+                                        yield Ok(probe_result);
+                                        break;
+                                    }
                                 }
-                            }
-                        } 
-                        
-                        yield probe_result;
-                        
-                        if !stop_send_probes {
-                            let probe_task = self.generate_probe_task(&self.icmp_probe_response_sniffer);
-                            self.increment_ttl_query_counter();
-                            probe_tasks.spawn(probe_task);
+                                
+                                yield Ok(probe_result);
+                                
+                                if !stop_send_probes {
+                                    let probe_task = self.generate_probe_task(&self.icmp_probe_response_sniffer);
+                                    self.increment_ttl_query_counter();
+                                    probe_tasks.spawn(probe_task);
+                                }
+                            },
+                            Err(_) => yield probe_result,
                         }
                     },
                     else => break
@@ -114,7 +117,7 @@ impl Traceroute {
     fn generate_probe_task(
         &self, 
         icmp_probe_response_sniffer: &IcmpProbeResponseSniffer
-    ) -> Pin<Box<impl Future<Output=Result<ProbeResult, String>>>> {
+    ) -> Pin<Box<impl Future<Output=Result<ProbeResult, ProbeError>>>> {
         
         let mut probe_task_generator = self.probe_task_generator.borrow_mut();
         match probe_task_generator.generate_probe_task(

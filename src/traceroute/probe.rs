@@ -1,20 +1,18 @@
+use std::io;
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 pub use parser::ProbeResponseParser;
 
-// use crate::traceroute::probe::parser::UdpProbeResponseParser;
-// use crate::traceroute::probe::sender::UdpProbeSender;
-// use TracerouteMethod::{ICMP, TCP, UDP};
-
 pub mod parser;
 pub mod task;
 pub mod generator;
+
 pub type ProbeId = String;
 
 #[derive(Clone, Debug)]
 pub struct ProbeResponse {
     id: ProbeId,
-    from_address: Ipv4Addr
+    from_address: Ipv4Addr,
 }
 
 impl ProbeResponse {
@@ -29,9 +27,10 @@ impl ProbeResponse {
 
 #[derive(Clone, Debug)]
 pub struct ProbeResult {
-    id: String,
+    id: ProbeId,
+    ttl: u8,
     from_address: Ipv4Addr,
-    rtt: Duration
+    rtt: Duration,
 }
 
 impl ProbeResult {
@@ -46,18 +45,39 @@ impl ProbeResult {
     pub fn rtt(&self) -> Duration {
         self.rtt
     }
+    
+    pub fn ttl(&self) -> u8 {
+        self.ttl
+    }
+}
+
+#[derive(Debug)]
+pub enum ProbeError {
+    Timeout { ttl: u8 },
+    IoError { ttl: u8, io_error: Option<io::Error> },
+}
+
+impl ProbeError {
+    pub fn get_ttl(&self) -> u8 {
+        match self {
+            ProbeError::Timeout { ttl } => *ttl,
+            ProbeError::IoError { ttl, .. } => *ttl
+        }
+    }
 }
 
 struct CompletableProbe {
     id: ProbeId,
+    ttl: u8,
     sent_at: Instant,
     probe_result: Option<ProbeResult>,
 }
 
 impl CompletableProbe {
-    pub fn new(id: &str) -> Self {
+    pub fn new(id: &str, ttl: u8) -> Self {
         Self {
             id: id.to_string(),
+            ttl,
             sent_at: Instant::now(),
             probe_result: None,
         }
@@ -74,6 +94,7 @@ impl CompletableProbe {
 
         Some(ProbeResult {
             id: probe_response.id,
+            ttl: self.ttl,
             from_address: probe_response.from_address,
             rtt: self.sent_at.elapsed()
         })
@@ -83,5 +104,5 @@ impl CompletableProbe {
 pub enum ProbeMethod {
     UDP,
     TCP,
-    ICMP
+    ICMP,
 }
