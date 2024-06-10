@@ -104,24 +104,16 @@ impl UdpProbeTask {
     }
 
     fn build_socket(domain: Domain) -> io::Result<AsyncTokioSocket> {
-        let socket = AsyncTokioSocket::new(domain, Type::RAW, Some(Protocol::UDP))?;
-        socket.set_header_included(true)?;
+        let socket = AsyncTokioSocket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
         Ok(socket)
     }
 
     async fn send_udp_probe(&self, ttl: u8) -> io::Result<CompletableProbe> {
         let completable_probe = CompletableProbe::new(&self.get_probe_id());
 
-        let source_port = self.get_unused_source_port()?;
-        let udp_datagram = packet_utils::build_udp_datagram_with_ports(source_port, self.destination_port);
-        let udp_datagram_bytes = udp_datagram.to_bytes();
-
-        let mut ip_datagram = self.build_empty_ip_datagram(ttl);
-        ip_datagram.set_payload(&udp_datagram_bytes);
-        ip_datagram.set_length(IpDatagram::STANDARD_HEADER_LENGTH + udp_datagram_bytes.len() as u16);
-
+        self.socket.set_ttl(ttl as u32)?;
         let socket_addr = SocketAddr::new(self.destination_address, self.destination_port);
-        self.socket.send_to(&ip_datagram.to_bytes(), socket_addr).await?;
+        self.socket.send_to(&[], socket_addr).await?;
 
         Ok(completable_probe)
     }
