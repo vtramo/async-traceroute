@@ -11,6 +11,7 @@ use pnet::packet::tcp::Tcp;
 use rand::{Rng, thread_rng};
 use socket2::{Domain, Protocol, Type};
 use tokio::select;
+use tokio::sync::mpsc::Sender;
 use tokio::time::sleep;
 
 use crate::traceroute::probe::{CompletableProbe, ProbeId, ProbeResponse, ProbeResult};
@@ -355,7 +356,7 @@ pub struct IcmpProbeTask {
     id: ProbeId,
     icmp_id: u16,
     icmp_sqn: u16,
-    socket: AsyncTokioSocket,
+    tx_to_icmp_raw_socket: Sender<(Vec<u8>, SocketAddr)>,
     destination_address: IpAddr,
     probe_response_receiver: Option<ProbeResponseReceiver>,
 }
@@ -367,7 +368,13 @@ impl ProbeTask for IcmpProbeTask {
         ttl: u8, 
         timeout_ms: u64
     ) -> Result<ProbeResult, String> {
-        let mut completable_hop = self.send_ping(ttl).await.unwrap(); // todo()
+        let mut completable_hop = match self.send_ping(ttl).await {
+            Ok(completable_probe) => completable_probe,
+            Err(error) => {
+                eprintln!("{:?}", error);
+                return Err(error.to_string())
+            },
+        };
 
         let timer = sleep(Duration::from_millis(timeout_ms));
 
@@ -406,34 +413,19 @@ impl IcmpProbeTask {
         icmp_sqn: u16,
         destination_address: IpAddr,
         probe_response_receiver: ProbeResponseReceiver,
-    ) -> io::Result<Self> {
-        Ok(Self {
+        tx_to_icmp_raw_socket: Sender<(Vec<u8>, SocketAddr)>,
+    ) -> Self {
+        Self {
             id: format!("{icmp_id}{icmp_sqn}"),
             icmp_id,
             icmp_sqn,
-            socket: Self::build_socket(
-                if destination_address.is_ipv4() {
-                    Domain::IPV4
-                } else { 
-                    Domain::IPV6
-                }
-            )?,
+            tx_to_icmp_raw_socket,
             destination_address,
             probe_response_receiver: Some(probe_response_receiver),
-        })
-    }
-
-    fn build_socket(domain: Domain) -> io::Result<AsyncTokioSocket> {
-        let icmp_protocol = match domain { 
-            Domain::IPV6 => Protocol::ICMPV6,
-            _ => Protocol::ICMPV4,
-        };
-        let socket = AsyncTokioSocket::new(domain, Type::RAW, Some(icmp_protocol))?;
-        socket.set_header_included(true)?;
-        Ok(socket)
+        }
     }
     
-    async fn send_ping(&self, ttl: u8) -> io::Result<CompletableProbe> {
+    async fn send_ping(&self, ttl: u8) -> Result<CompletableProbe, String> {
         let completable_probe = CompletableProbe::new(&self.get_probe_id());
         
         let mut echo_request = build_icmpv4_echo_request(self.icmp_id, self.icmp_sqn);
@@ -444,8 +436,12 @@ impl IcmpProbeTask {
         ip_datagram.set_length(IpDatagram::STANDARD_HEADER_LENGTH + echo_request_bytes.len() as u16);
         ip_datagram.set_payload(&echo_request_bytes);
 
-        let socket_addr = SocketAddr::new(self.destination_address, 0);
-        self.socket.send_to(&ip_datagram.to_bytes(), socket_addr).await?;
+        let socket_addr = SocketAddr::new(self.destination_address, 1234);
+        let ip_datagram_bytes = ip_datagram.to_bytes();
+        self.tx_to_icmp_raw_socket
+            .send((ip_datagram_bytes, socket_addr))
+            .await
+            .expect("Should be always open!");
         
         Ok(completable_probe)
     }
