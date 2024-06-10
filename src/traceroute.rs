@@ -29,7 +29,7 @@ pub enum TracerouteError {
 }
 
 pub struct Traceroute {
-    ip_addr: IpAddr,
+    target_ip_address: IpAddr,
     max_ttl: u8,
     nqueries: u8,
     sim_queries: u16,
@@ -51,7 +51,7 @@ impl Traceroute {
         icmp_probe_response_sniffer: IcmpProbeResponseSniffer
     ) -> Self {
         Self {
-            ip_addr,
+            target_ip_address: ip_addr,
             max_ttl,
             nqueries,
             sim_queries: min(sim_queries, (max_ttl * nqueries) as u16),
@@ -68,8 +68,8 @@ impl Traceroute {
 
         for _ in 0..self.sim_queries {
             let probe_task = self.generate_probe_task(&self.icmp_probe_response_sniffer);
-            probe_tasks.spawn(probe_task);
             self.increment_ttl_query_counter();
+            probe_tasks.spawn(probe_task);
         }
         
         let icmp_probe_response_sniffer = Arc::clone(&self.icmp_probe_response_sniffer);
@@ -77,6 +77,7 @@ impl Traceroute {
             icmp_probe_response_sniffer.sniff().await
         });
 
+        let mut target_address_encountered_counter = 0;
         let mut stop_send_probes = false;
         stream! {
             loop {
@@ -86,7 +87,18 @@ impl Traceroute {
     
                 select! {
                     Some(Ok(probe_result)) = probe_tasks.join_next() => {
+                        if let Ok(ok_probe_result) = &probe_result {
+                            if ok_probe_result.from_address() == self.target_ip_address {
+                                target_address_encountered_counter += 1;
+                                if target_address_encountered_counter >= self.nqueries {
+                                    yield probe_result;
+                                    break;
+                                }
+                            }
+                        } 
+                        
                         yield probe_result;
+                        
                         if !stop_send_probes {
                             let probe_task = self.generate_probe_task(&self.icmp_probe_response_sniffer);
                             self.increment_ttl_query_counter();
@@ -106,7 +118,7 @@ impl Traceroute {
         
         let mut probe_task_generator = self.probe_task_generator.borrow_mut();
         match probe_task_generator.generate_probe_task(
-            self.ip_addr,
+            self.target_ip_address,
             &icmp_probe_response_sniffer
         ) {
             Ok((_, mut probe_task)) => {
@@ -115,7 +127,6 @@ impl Traceroute {
                 let probe_task_future = Box::pin(async move {
                     probe_task.send_probe(current_ttl, timeout).await
                 });
-                
                 probe_task_future
             }
             Err(_) => todo!()

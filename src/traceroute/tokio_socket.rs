@@ -116,7 +116,6 @@ impl MioTokioSocket {
 
     fn send_to(&self, buf: &[u8], socket_addr: SocketAddr) -> io::Result<usize> {
         let result = self.socket.send_to(buf, &socket_addr.into());
-        println!("send");
         result
     }
 
@@ -127,7 +126,6 @@ impl MioTokioSocket {
     /// Returns the number of bytes received; or, an error.
     fn recv(&self, buf: &mut [u8]) -> io::Result<usize> {
         let result = (&self.socket).read(buf);
-        println!("recv");
         result
     }
 

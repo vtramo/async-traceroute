@@ -60,15 +60,14 @@ impl ProbeTask for UdpProbeTask {
         let probe_result =
             select! {
                 _ = timer => {
-                    println!("timeout");
+                    eprintln!("timeout");
                     Err("timeout")
                 },
                 Ok(probe_response) = probe_response_receiver => {
                     if let Some(probe_result) = completable_hop.complete(probe_response) {
-                        println!("{:?}", probe_result);
                         Ok(probe_result)
                     } else {
-                        println!("Bad Probe Result");
+                        eprintln!("Bad Probe Result");
                         Err("Bad Probe Result")
                     }
                 },
@@ -197,15 +196,14 @@ impl ProbeTask for TcpProbeTask {
         let probe_result =
             select! {
                 _ = timer => {
-                    println!("timeout"); // todo(): errori
+                    eprintln!("timeout"); // todo(): errori
                     Err("timeout")
                 },
                 Ok(probe_response) = probe_response_receiver => {
                     if let Some(probe_result) = completable_hop.complete(probe_response) {
-                        println!("{:?}", probe_result);
                         Ok(probe_result)
                     } else {
-                        println!("Bad Probe Result");
+                        eprintln!("Bad Probe Result");
                         Err("Bad Probe Result")
                     }
                 },
@@ -389,15 +387,14 @@ impl ProbeTask for IcmpProbeTask {
         let probe_result =
             select! {
                 _ = timer => {
-                    println!("timeout");
+                    eprintln!("timeout");
                     Err("timeout")
                 },
                 Ok(probe_response) = probe_response_receiver => {
                     if let Some(probe_result) = completable_hop.complete(probe_response) {
-                        println!("{:?}", probe_result);
                         Ok(probe_result)
                     } else {
-                        println!("Bad Probe Result");
+                        eprintln!("Bad Probe Result");
                         Err("Bad Probe Result")
                     }
                 },
