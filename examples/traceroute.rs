@@ -5,9 +5,9 @@ use std::str::FromStr;
 
 use futures_util::{pin_mut, StreamExt};
 
-use traceroute_rust::traceroute::icmp_sniffer::IcmpProbeResponseSniffer;
 use traceroute_rust::traceroute::probe::generator::{IcmpProbeTaskGenerator, ProbeTaskGenerator, TcpProbeTaskGenerator, UdpProbeTaskGenerator};
 use traceroute_rust::traceroute::probe::parser::{IcmpProbeResponseParser, ProbeReplyParser, TcpProbeResponseParser, UdpProbeResponseParser};
+use traceroute_rust::traceroute::probe::sniffer::IcmpProbeResponseSniffer;
 use traceroute_rust::traceroute::Traceroute;
 
 #[tokio::main]

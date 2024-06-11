@@ -3,6 +3,7 @@ use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr};
 use std::os::fd::{AsRawFd, RawFd};
 use std::sync::Arc;
+
 use mio::{event::Source, Interest as InterestMio, Registry, Token};
 use mio::unix::SourceFd;
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
@@ -12,11 +13,11 @@ use tokio::sync::mpsc::Receiver;
 
 /// An ICMP socket used with `tokio` events.
 #[derive(Clone)]
-pub struct AsyncTokioSocket {
+pub struct AsyncSocket {
     socket: Arc<AsyncFd<MioTokioSocket>>,
 }
 
-impl AsyncTokioSocket {
+impl AsyncSocket {
     /// `new` creates a raw system socket which is non-blocking.
     ///
     /// Calling `new` requires root permission for the
@@ -177,7 +178,7 @@ impl AsRawFd for MioTokioSocket {
 }
 
 pub struct SharedAsyncTokioSocket {
-    socket: AsyncTokioSocket,
+    socket: AsyncSocket,
     rx: Receiver<(Vec<u8>, SocketAddr)>,
 }
 
@@ -189,7 +190,7 @@ impl SharedAsyncTokioSocket {
         rx: Receiver<(Vec<u8>, SocketAddr)>,
     ) -> io::Result<Self> {
         Ok(Self {
-            socket: AsyncTokioSocket::new(domain, ty, protocol)?,
+            socket: AsyncSocket::new(domain, ty, protocol)?,
             rx
         })
     }

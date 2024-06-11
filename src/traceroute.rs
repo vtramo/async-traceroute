@@ -4,19 +4,20 @@ use std::future::Future;
 use std::net::IpAddr;
 use std::pin::Pin;
 use std::sync::Arc;
+
 use async_stream::stream;
 use futures_core::stream::Stream;
 use tokio::select;
 use tokio::task::JoinSet;
-use crate::traceroute::icmp_sniffer::IcmpProbeResponseSniffer;
-use crate::traceroute::probe::generator::ProbeTaskGenerator;
+
 use crate::traceroute::probe::{ProbeError, ProbeResult};
+use crate::traceroute::probe::generator::ProbeTaskGenerator;
+use crate::traceroute::probe::sniffer::{IcmpProbeResponseSniffer, Sniffer};
 
 pub(crate) mod terminal;
-pub mod icmp_sniffer;
 pub mod probe;
 mod utils;
-mod tokio_socket;
+mod async_socket;
 
 pub enum TracerouteHopStatus {
     Completed,

@@ -5,10 +5,10 @@ use socket2::{Domain, Protocol, Type};
 use tokio::sync::{mpsc, oneshot};
 use tokio::sync::mpsc::{Receiver, Sender};
 
-use crate::traceroute::icmp_sniffer::IcmpProbeResponseSniffer;
+use crate::traceroute::async_socket::SharedAsyncTokioSocket;
 use crate::traceroute::probe::ProbeId;
+use crate::traceroute::probe::sniffer::{IcmpProbeResponseSniffer, Sniffer};
 use crate::traceroute::probe::task::{IcmpProbeTask, ProbeTask, TcpProbeTask, UdpProbeTask};
-use crate::traceroute::tokio_socket::SharedAsyncTokioSocket;
 
 pub type GeneratedProbeTask = (ProbeId, Box<dyn ProbeTask>);
 
@@ -40,7 +40,7 @@ impl ProbeTaskGenerator for UdpProbeTaskGenerator {
     ) -> io::Result<GeneratedProbeTask> {
         let (tx_probe_response_channel, rx_probe_response_channel) = oneshot::channel();
         let task = UdpProbeTask::new(ip_addr.clone(), self.destination_port, rx_probe_response_channel)?;
-        icmp_probe_response_sniffer.register_probe(task.get_probe_id(), tx_probe_response_channel);
+        icmp_probe_response_sniffer.register_oneshot(task.get_probe_id(), tx_probe_response_channel);
         let generated_probe_task = (self.destination_port.to_string(), Box::new(task) as Box<dyn ProbeTask>);
         self.destination_port += 1;
         Ok(generated_probe_task)
@@ -78,7 +78,7 @@ impl ProbeTaskGenerator for TcpProbeTaskGenerator {
     ) -> io::Result<GeneratedProbeTask> {
         let (tx_probe_response_channel, rx_probe_response_channel) = oneshot::channel();
         let task = TcpProbeTask::new(self.ip_id, ip_addr.clone(), self.destination_port, rx_probe_response_channel)?;
-        icmp_probe_response_sniffer.register_probe(task.get_probe_id(), tx_probe_response_channel);
+        icmp_probe_response_sniffer.register_oneshot(task.get_probe_id(), tx_probe_response_channel);
         let generated_probe_task = (self.ip_id.to_string(), Box::new(task) as Box<dyn ProbeTask>);
         self.ip_id += 1;
         Ok(generated_probe_task)
@@ -92,8 +92,10 @@ pub struct IcmpProbeTaskGenerator {
 }
 
 impl IcmpProbeTaskGenerator {
+    const SHARED_SOCKET_BUFFER_SIZE: usize = 255;
+    
     pub fn new() -> io::Result<Self> {
-        let (tx_to_shared_socket, rx_to_shared_socket) = mpsc::channel(255);
+        let (tx_to_shared_socket, rx_to_shared_socket) = mpsc::channel(Self::SHARED_SOCKET_BUFFER_SIZE);
         Self::spawn_shared_socket(rx_to_shared_socket)?;
         
         Ok(Self {
@@ -133,7 +135,7 @@ impl ProbeTaskGenerator for IcmpProbeTaskGenerator {
             rx_probe_response_channel, 
             self.tx_to_shared_socket.clone(),
         );
-        icmp_probe_response_sniffer.register_probe(task.get_probe_id(), tx_probe_response_channel);
+        icmp_probe_response_sniffer.register_oneshot(task.get_probe_id(), tx_probe_response_channel);
         let probe_id = format!("{}{}", self.icmp_id, self.icmp_sqn);
         let generated_probe_task = (probe_id, Box::new(task) as Box<dyn ProbeTask>);
         self.icmp_sqn += 1;

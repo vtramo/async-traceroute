@@ -1,11 +1,13 @@
 use std::io;
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
+
 pub use parser::ProbeResponseParser;
 
 pub mod parser;
 pub mod task;
 pub mod generator;
+pub mod sniffer;
 
 pub type ProbeId = String;
 

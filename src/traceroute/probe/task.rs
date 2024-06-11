@@ -13,8 +13,8 @@ use tokio::select;
 use tokio::sync::mpsc::Sender;
 use tokio::time::sleep;
 
+use crate::traceroute::async_socket::AsyncSocket;
 use crate::traceroute::probe::{CompletableProbe, ProbeError, ProbeId, ProbeResponse, ProbeResult};
-use crate::traceroute::tokio_socket::AsyncTokioSocket;
 use crate::traceroute::utils::bytes::ToBytes;
 use crate::traceroute::utils::packet_utils;
 use crate::traceroute::utils::packet_utils::{build_icmpv4_echo_request, get_default_ipv4_addr_interface, get_default_ipv6_addr_interface, icmpv4_checksum, internet_checksum, IpDatagram};
@@ -34,7 +34,7 @@ pub trait ProbeTask: Send {
 
 pub struct UdpProbeTask {
     id: ProbeId,
-    socket: AsyncTokioSocket,
+    socket: AsyncSocket,
     destination_address: IpAddr,
     destination_port: u16,
     probe_response_receiver: Option<ProbeResponseReceiver>,
@@ -103,8 +103,8 @@ impl UdpProbeTask {
         })
     }
 
-    fn build_socket(domain: Domain) -> io::Result<AsyncTokioSocket> {
-        let socket = AsyncTokioSocket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
+    fn build_socket(domain: Domain) -> io::Result<AsyncSocket> {
+        let socket = AsyncSocket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
         Ok(socket)
     }
 
@@ -122,7 +122,8 @@ impl UdpProbeTask {
 pub struct TcpProbeTask {
     id: ProbeId,
     ip_id: u16,
-    socket: AsyncTokioSocket,
+    isn: u32,
+    socket: AsyncSocket,
     destination_address: IpAddr,
     destination_port: u16,
     probe_response_receiver: Option<ProbeResponseReceiver>,
@@ -159,14 +160,14 @@ impl ProbeTask for TcpProbeTask {
                         Err(ProbeError::IoError { ttl, io_error: None })
                     }
                 },
-                Ok((ipv4_datagram, _)) = Self::wait_syn_ack(&self.socket) => {
+                Ok((ipv4_datagram, _)) = self.wait_syn_ack() => {
                     let from_address = ipv4_datagram.source;
                     
                     let probe_response = ProbeResponse { 
                         id: self.id.clone(),
                         from_address,
                     };
-                    
+
                     let probe_result = match completable_hop.complete(probe_response) {
                         None => return Err(ProbeError::IoError { ttl, io_error: None }),
                         Some(probe_result) => probe_result
@@ -193,6 +194,7 @@ impl TcpProbeTask {
     ) -> io::Result<Self> {
         Ok(Self {
             id: ip_id.to_string(),
+            isn: Self::generate_isn(),
             ip_id,
             socket: Self::build_socket(
                 if destination_address.is_ipv4() { 
@@ -207,8 +209,8 @@ impl TcpProbeTask {
         })
     }
 
-    fn build_socket(domain: Domain) -> io::Result<AsyncTokioSocket> {
-        let socket = AsyncTokioSocket::new(domain, Type::RAW, Some(Protocol::TCP))?;
+    fn build_socket(domain: Domain) -> io::Result<AsyncSocket> {
+        let socket = AsyncSocket::new(domain, Type::RAW, Some(Protocol::TCP))?;
         socket.set_header_included(true)?;
         Ok(socket)
     }
@@ -217,8 +219,7 @@ impl TcpProbeTask {
         let completable_probe = CompletableProbe::new(&self.get_probe_id(), ttl);
 
         let source_port = Self::generate_source_port();
-        let isn = Self::generate_isn();
-        let mut tcp_syn_segment = packet_utils::build_tcp_syn_segment(source_port, self.destination_port, isn);
+        let mut tcp_syn_segment = packet_utils::build_tcp_syn_segment(source_port, self.destination_port, self.isn);
         let mut ip_datagram = self.build_empty_ip_datagram(ttl, self.ip_id);
         let checksum = internet_checksum(&tcp_syn_segment, &ip_datagram);
         tcp_syn_segment.checksum = checksum;
@@ -285,10 +286,10 @@ impl TcpProbeTask {
         todo!()
     }
     
-    async fn wait_syn_ack(socket: &AsyncTokioSocket) -> io::Result<(Ipv4, Tcp)> {
+    async fn wait_syn_ack(&self) -> io::Result<(Ipv4, Tcp)> {
         let mut buffer = [0u8; 1024];
         loop {
-            socket.recv(&mut buffer).await?;
+            self.socket.recv(&mut buffer).await?;
 
             let ipv4_datagram = match packet_utils::build_ipv4_datagram_from_bytes(&buffer) {
                 Some(ipv4_datagram) => ipv4_datagram,
@@ -299,6 +300,10 @@ impl TcpProbeTask {
                 Some(tcp_segment) => tcp_segment,
                 None => continue,
             };
+
+            if tcp_segment.acknowledgement != self.isn + 1 {
+                continue;
+            }
 
             if packet_utils::is_tcp_syn_ack_segment(&tcp_segment) {
                 break Ok((ipv4_datagram, tcp_segment));
