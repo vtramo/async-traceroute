@@ -61,10 +61,7 @@ impl ProbeTask for UdpProbeTask {
         
         let probe_result =
             select! {
-                _ = timer => {
-                    println!("timeout");
-                    Err(ProbeError::Timeout { ttl })
-                },
+                _ = timer => Err(ProbeError::Timeout { ttl }),
                 Ok(probe_response) = probe_response_receiver => {
                     if let Some(probe_result) = completable_hop.complete(probe_response) {
                         Ok(probe_result)

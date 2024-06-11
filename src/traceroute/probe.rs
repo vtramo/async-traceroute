@@ -33,6 +33,7 @@ pub struct ProbeResult {
     ttl: u8,
     from_address: Ipv4Addr,
     rtt: Duration,
+    hostname: Option<String>,
 }
 
 impl ProbeResult {
@@ -50,6 +51,10 @@ impl ProbeResult {
     
     pub fn ttl(&self) -> u8 {
         self.ttl
+    }
+    
+    pub fn set_hostname(&mut self, hostname: &str) {
+        self.hostname = Some(hostname.to_string());
     }
 }
 
@@ -98,7 +103,8 @@ impl CompletableProbe {
             id: probe_response.id,
             ttl: self.ttl,
             from_address: probe_response.from_address,
-            rtt: self.sent_at.elapsed()
+            rtt: self.sent_at.elapsed(),
+            hostname: None,
         })
     }
 }

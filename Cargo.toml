@@ -13,6 +13,7 @@ socket2 = { version = "0.5.7", features = ["all"] }
 tokio = { version = "1.38.0", features = ["full"] }
 tokio-stream = "0.1.15"
 mio = { version = "0.8.6", features = ["os-poll", "net", "os-ext"] }
+domain = { version = "0.10.1", features = ["resolv"] }
 async-trait = "0.1.80"
 async-stream = "0.3.5"
 futures = "0.3.30"

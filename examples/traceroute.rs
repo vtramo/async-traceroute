@@ -31,6 +31,7 @@ async fn main() -> io::Result<()> {
         3,
         16,
         10000,
+        true,
         generator,
         icmp_sniffer
     );

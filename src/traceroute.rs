@@ -13,10 +13,11 @@ use tokio::task::JoinSet;
 use crate::traceroute::probe::{ProbeError, ProbeResult};
 use crate::traceroute::probe::generator::ProbeTaskGenerator;
 use crate::traceroute::probe::sniffer::{IcmpProbeResponseSniffer, Sniffer};
+use crate::traceroute::utils::dns;
 
 pub(crate) mod terminal;
 pub mod probe;
-mod utils;
+pub mod utils;
 mod async_socket;
 
 pub enum TracerouteHopStatus {
@@ -35,6 +36,7 @@ pub struct Traceroute {
     nqueries: u8,
     sim_queries: u16,
     max_wait_probe_ms: u64,
+    is_active_dns_lookup: bool,
     current_ttl: Box<RefCell<u8>>,
     current_query: Box<RefCell<u8>>,
     probe_task_generator: Box<RefCell<Box<dyn ProbeTaskGenerator>>>,
@@ -48,6 +50,7 @@ impl Traceroute {
         nqueries: u8,
         sim_queries: u16,
         max_wait_probe_ms: u64,
+        is_active_dns_lookup: bool,
         probe_task_generator: Box<dyn ProbeTaskGenerator>,
         icmp_probe_response_sniffer: IcmpProbeResponseSniffer
     ) -> Self {
@@ -57,6 +60,7 @@ impl Traceroute {
             nqueries,
             sim_queries: min(sim_queries, (max_ttl * nqueries) as u16),
             max_wait_probe_ms,
+            is_active_dns_lookup,
             current_ttl: Box::new(RefCell::new(1)),
             current_query: Box::new(RefCell::new(1)),
             probe_task_generator: Box::new(RefCell::new(probe_task_generator)),
@@ -89,7 +93,11 @@ impl Traceroute {
                 select! {
                     Some(Ok(probe_result)) = probe_tasks.join_next() => {
                         match probe_result {
-                            Ok(probe_result) => {
+                            Ok(mut probe_result) => {
+                                if self.is_active_dns_lookup {
+                                    Self::reverse_dns_lookup(&mut probe_result).await;
+                                }
+                                
                                 if probe_result.from_address() == self.target_ip_address {
                                     target_address_encountered_counter += 1;
                                     if target_address_encountered_counter >= self.nqueries {
@@ -144,6 +152,13 @@ impl Traceroute {
             *current_query = 1;
             let mut current_ttl = self.current_ttl.borrow_mut();
             *current_ttl += 1;
+        }
+    }
+    
+    async fn reverse_dns_lookup(probe_result: &mut ProbeResult) {
+        let ip_addr = &IpAddr::V4(probe_result.from_address());
+        if let Some(hostname) = dns::reverse_dns_lookup_first_hostname(ip_addr).await {
+            probe_result.set_hostname(&hostname);
         }
     }
 }
