@@ -26,7 +26,7 @@ pub trait ProbeTask: Send {
     async fn send_probe(
         &mut self,
         ttl: u8,
-        timeout_ms: u64,
+        timeout: Duration,
     ) -> Result<ProbeResult, ProbeError>;
 
     fn get_probe_id(&self) -> ProbeId;
@@ -45,14 +45,14 @@ impl ProbeTask for UdpProbeTask {
     async fn send_probe(
         &mut self,
         ttl: u8,
-        timeout_ms: u64,
+        timeout: Duration,
     ) -> Result<ProbeResult, ProbeError> {
         let mut completable_hop = match self.send_udp_probe(ttl).await {
             Ok(completable_hop) => completable_hop,
             Err(io_error) => return Err(ProbeError::IoError { ttl, io_error: Some(io_error) })
         };
 
-        let timer = sleep(Duration::from_millis(timeout_ms));
+        let timer = sleep(timeout);
 
         let probe_response_receiver = match self.probe_response_receiver.take() {
             None => return Err(ProbeError::IoError { ttl, io_error: None }),
@@ -130,15 +130,15 @@ pub struct TcpProbeTask {
 impl ProbeTask for TcpProbeTask {
     async fn send_probe(
         &mut self,
-        ttl: u8, 
-        timeout_ms: u64
+        ttl: u8,
+        timeout: Duration
     ) -> Result<ProbeResult, ProbeError> {
         let mut completable_hop = match self.send_tcp_probe(ttl).await {
             Ok(completable_hop) => completable_hop,
             Err(io_error) => return Err(ProbeError::IoError { ttl, io_error: Some(io_error) })
         };
 
-        let timer = sleep(Duration::from_millis(timeout_ms));
+        let timer = sleep(timeout);
 
         let probe_response_receiver = match self.probe_response_receiver.take() {
             None => return Err(ProbeError::IoError { ttl, io_error: None }),
@@ -321,13 +321,13 @@ pub struct IcmpProbeTask {
 #[async_trait]
 impl ProbeTask for IcmpProbeTask {
     async fn send_probe(
-        &mut self, 
-        ttl: u8, 
-        timeout_ms: u64
+        &mut self,
+        ttl: u8,
+        timeout: Duration
     ) -> Result<ProbeResult, ProbeError> {
         let mut completable_hop =  self.send_ping(ttl).await?;
 
-        let timer = sleep(Duration::from_millis(timeout_ms));
+        let timer = sleep(timeout);
 
         let probe_response_receiver = match self.probe_response_receiver.take() {
             None => return Err(ProbeError::IoError { ttl, io_error: None }),
