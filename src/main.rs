@@ -2,12 +2,12 @@ use std::time::Duration;
 
 use clap::Parser;
 
-use traceroute_rust::traceroute::probe::generator::{IcmpProbeTaskGenerator, ProbeTaskGenerator, TcpProbeTaskGenerator, UdpProbeTaskGenerator};
-use traceroute_rust::traceroute::probe::parser::{IcmpProbeResponseParser, ProbeReplyParser, TcpProbeResponseParser, UdpProbeResponseParser};
-use traceroute_rust::traceroute::probe::sniffer::IcmpProbeResponseSniffer;
-use traceroute_rust::traceroute::Traceroute;
-use traceroute_rust::traceroute::utils::dns::dns_lookup_first_ipv4_addr;
+use traceroute_rust::generator::{IcmpProbeTaskGenerator, ProbeTaskGenerator, TcpProbeTaskGenerator, UdpProbeTaskGenerator};
+use traceroute_rust::parser::{IcmpProbeResponseParser, ProbeReplyParser, TcpProbeResponseParser, UdpProbeResponseParser};
+use traceroute_rust::sniffer::IcmpProbeResponseSniffer;
+use traceroute_rust::Traceroute;
 use traceroute_rust::TracerouteTerminal;
+use traceroute_rust::utils::dns::dns_lookup_first_ipv4_addr;
 
 #[derive(Debug, clap::ValueEnum, Clone, Default)]
 pub enum ProbeMethod {

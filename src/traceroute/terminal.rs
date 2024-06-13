@@ -1,7 +1,4 @@
 use std::collections::HashMap;
-use std::fmt::Display;
-use std::fs::File;
-use std::io::Write;
 use std::net::Ipv4Addr;
 
 use futures::pin_mut;
@@ -32,6 +29,7 @@ impl TracerouteTerminal {
             hop_by_ttl: HashMap::with_capacity(max_ttl as usize)
         }
     }
+    
     pub async fn print_trace(mut self) {
         let traceroute_stream= self.traceroute.trace();
         pin_mut!(traceroute_stream);
@@ -40,12 +38,7 @@ impl TracerouteTerminal {
         self.hop_by_ttl.insert(1, PrintableHop::new(1));
         Self::print_current_hop_index(self.current_ttl);
 
-        let mut file = File::create("debug.txt").unwrap();
-
         'outer: while let Some(probe_result) = traceroute_stream.next().await {
-            let string = format!("{:?}\n", probe_result);
-            file.write_all(string.as_bytes()).unwrap();
-
             let ttl = match probe_result {
                 Ok(probe_result) => {
                     let probe_result_ttl = probe_result.ttl();

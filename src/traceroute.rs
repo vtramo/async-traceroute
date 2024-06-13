@@ -16,20 +16,10 @@ use crate::traceroute::probe::generator::ProbeTaskGenerator;
 use crate::traceroute::probe::sniffer::{IcmpProbeResponseSniffer, Sniffer};
 use crate::traceroute::utils::dns;
 
-pub(crate) mod terminal;
-pub mod probe;
 pub mod utils;
+pub mod terminal;
+pub mod probe;
 mod async_socket;
-
-pub enum TracerouteHopStatus {
-    Completed,
-    PartiallyCompleted,
-    NoReply
-}
-
-pub enum TracerouteError {
-    HostnameNotResolved(String)
-}
 
 pub struct Traceroute {
     target_ip_address: IpAddr,

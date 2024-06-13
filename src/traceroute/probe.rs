@@ -1,4 +1,4 @@
-use std::fmt::{Display, Write};
+use std::fmt::{Display};
 use std::io;
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
