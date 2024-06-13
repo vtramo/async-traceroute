@@ -33,9 +33,6 @@ impl TracerouteTerminal {
         }
     }
     pub async fn print_trace(mut self) {
-        let ip_addr = self.traceroute.target_ip_address;
-        println!("traceroute to {ip_addr} ({ip_addr}), {} hops max", self.max_ttl);
-        
         let traceroute_stream= self.traceroute.trace();
         pin_mut!(traceroute_stream);
 

@@ -128,9 +128,3 @@ impl CompletableProbe {
         })
     }
 }
-
-pub enum ProbeMethod {
-    UDP,
-    TCP,
-    ICMP,
-}

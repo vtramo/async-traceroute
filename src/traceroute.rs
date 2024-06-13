@@ -77,7 +77,7 @@ impl Traceroute {
             self.increment_ttl_query_counter();
             probe_tasks.spawn(probe_task);
         }
-        
+
         let icmp_probe_response_sniffer = Arc::clone(&self.icmp_probe_response_sniffer);
         tokio::spawn(async move {
             icmp_probe_response_sniffer.sniff().await
@@ -90,7 +90,7 @@ impl Traceroute {
                 if *self.current_ttl.borrow() > self.max_ttl {
                     stop_send_probes = true;
                 }
-    
+
                 select! {
                     Some(Ok(probe_result)) = probe_tasks.join_next() => {
                         match probe_result {
@@ -98,7 +98,7 @@ impl Traceroute {
                                 if self.is_active_dns_lookup {
                                     Self::reverse_dns_lookup(&mut probe_result).await;
                                 }
-                                
+
                                 if probe_result.from_address() == self.target_ip_address {
                                     target_address_encountered_counter += 1;
                                     if target_address_encountered_counter >= self.nqueries {
@@ -107,7 +107,7 @@ impl Traceroute {
                                 }
                                 
                                 yield Ok(probe_result);
-                                
+
                                 if !stop_send_probes {
                                     let probe_task = self.generate_probe_task(&self.icmp_probe_response_sniffer);
                                     self.increment_ttl_query_counter();
