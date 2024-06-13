@@ -11,7 +11,7 @@ COPY --from=planner /app/recipe.json .
 RUN cargo chef cook --release
 COPY . .
 RUN cargo build --release
-RUN mv ./target/debug/tokio ./app
+RUN mv ./target/debug/traceroute-rust ./app
 
 FROM debian:stable-slim AS runtime
 WORKDIR /app

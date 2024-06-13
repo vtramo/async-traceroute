@@ -2,9 +2,10 @@ version: '3.8'
 
 services:
   async-rust-icmp:
-    image: traceroute-rust-tokio
-    container_name: traceroute-rust-tokio
-    privileged: true
+    image: traceroute-rust
+    container_name: traceroute-rust
+    command:
+      - google.com
     cap_add:
       - NET_RAW
     deploy:
