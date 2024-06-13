@@ -4,6 +4,7 @@ use std::future::Future;
 use std::net::IpAddr;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_stream::stream;
 use futures_core::stream::Stream;
@@ -33,12 +34,12 @@ pub enum TracerouteError {
 pub struct Traceroute {
     target_ip_address: IpAddr,
     max_ttl: u8,
-    nqueries: u8,
+    nqueries: u16,
     sim_queries: u16,
-    max_wait_probe_ms: u64,
+    max_wait_probe: Duration,
     is_active_dns_lookup: bool,
     current_ttl: Box<RefCell<u8>>,
-    current_query: Box<RefCell<u8>>,
+    current_query: Box<RefCell<u16>>,
     probe_task_generator: Box<RefCell<Box<dyn ProbeTaskGenerator>>>,
     icmp_probe_response_sniffer: Arc<IcmpProbeResponseSniffer>,
 }
@@ -47,9 +48,9 @@ impl Traceroute {
     pub fn new(
         ip_addr: IpAddr,
         max_ttl: u8,
-        nqueries: u8,
+        nqueries: u16,
         sim_queries: u16,
-        max_wait_probe_ms: u64,
+        max_wait_probe: Duration,
         is_active_dns_lookup: bool,
         probe_task_generator: Box<dyn ProbeTaskGenerator>,
         icmp_probe_response_sniffer: IcmpProbeResponseSniffer
@@ -58,8 +59,8 @@ impl Traceroute {
             target_ip_address: ip_addr,
             max_ttl,
             nqueries,
-            sim_queries: min(sim_queries, (max_ttl * nqueries) as u16),
-            max_wait_probe_ms,
+            sim_queries: min(sim_queries, (max_ttl as u16) * nqueries),
+            max_wait_probe,
             is_active_dns_lookup,
             current_ttl: Box::new(RefCell::new(1)),
             current_query: Box::new(RefCell::new(1)),
@@ -101,8 +102,7 @@ impl Traceroute {
                                 if probe_result.from_address() == self.target_ip_address {
                                     target_address_encountered_counter += 1;
                                     if target_address_encountered_counter >= self.nqueries {
-                                        yield Ok(probe_result);
-                                        break;
+                                        stop_send_probes = true;
                                     }
                                 }
                                 
@@ -135,7 +135,7 @@ impl Traceroute {
         ) {
             Ok((_, mut probe_task)) => {
                 let current_ttl = *self.current_ttl.borrow();
-                let timeout = self.max_wait_probe_ms;
+                let timeout = self.max_wait_probe;
                 let probe_task_future = Box::pin(async move {
                     probe_task.send_probe(current_ttl, timeout).await
                 });
@@ -160,5 +160,13 @@ impl Traceroute {
         if let Some(hostname) = dns::reverse_dns_lookup_first_hostname(ip_addr).await {
             probe_result.set_hostname(&hostname);
         }
+    }
+    
+    pub fn get_nqueries(&self) -> u16 {
+        self.nqueries
+    }
+    
+    pub fn get_max_ttl(&self) -> u8 {
+        self.max_ttl
     }
 }

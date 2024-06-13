@@ -2,13 +2,13 @@ use std::env::args;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr};
 use std::str::FromStr;
-
-use futures_util::{pin_mut, StreamExt};
+use std::time::Duration;
 
 use traceroute_rust::traceroute::probe::generator::{IcmpProbeTaskGenerator, ProbeTaskGenerator, TcpProbeTaskGenerator, UdpProbeTaskGenerator};
 use traceroute_rust::traceroute::probe::parser::{IcmpProbeResponseParser, ProbeReplyParser, TcpProbeResponseParser, UdpProbeResponseParser};
 use traceroute_rust::traceroute::probe::sniffer::IcmpProbeResponseSniffer;
 use traceroute_rust::traceroute::Traceroute;
+use traceroute_rust::TracerouteTerminal;
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
@@ -30,18 +30,14 @@ async fn main() -> io::Result<()> {
         20,
         3,
         16,
-        10000,
+        Duration::from_secs(3),
         true,
         generator,
         icmp_sniffer
     );
-
-    let traceroute_stream= traceroute.trace();
-    pin_mut!(traceroute_stream);
     
-    while let Some(probe_result) = traceroute_stream.next().await {
-        println!("{:?}", probe_result);
-    }
+    let traceroute_terminal = TracerouteTerminal::new(traceroute);
+    traceroute_terminal.print_trace().await;
 
     Ok(())
 }

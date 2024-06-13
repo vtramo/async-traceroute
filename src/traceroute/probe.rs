@@ -1,3 +1,4 @@
+use std::fmt::{Display, Write};
 use std::io;
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
@@ -55,6 +56,25 @@ impl ProbeResult {
     
     pub fn set_hostname(&mut self, hostname: &str) {
         self.hostname = Some(hostname.to_string());
+    }
+    pub fn get_hostname(&self) -> Option<String> {
+        self.hostname.clone()
+    }
+}
+
+impl Display for ProbeResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut string = String::with_capacity(300);
+        let from_address = self.from_address;
+        string.push_str(&self.hostname.as_ref().unwrap_or(&from_address.to_string()));
+        string.push(' ');
+        string.push_str(&format!("({from_address})"));
+        string.push_str("  ");
+        
+        let mut rtt_micros = self.rtt.as_micros().to_string();
+        rtt_micros.insert(2, '.');
+        string.push_str(&format!("{:2} ms", rtt_micros));
+        write!(f, "{}", string)
     }
 }
 
