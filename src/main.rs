@@ -1,3 +1,5 @@
+use std::net::IpAddr;
+use std::str::FromStr;
 use std::time::Duration;
 
 use clap::Parser;
@@ -53,9 +55,13 @@ struct TracerouteOptions {
 async fn main() -> Result<(), String> {
     let traceroute_options = TracerouteOptions::parse();
     let hostname = traceroute_options.host;
-    let ip_addr = match dns_lookup_first_ipv4_addr(&hostname).await {
-        None => return Err(String::from("Hostname not resolvable")),
-        Some(ip_addr) => ip_addr,
+
+    let ip_addr = match IpAddr::from_str(&hostname) {
+        Ok(ip_addr) => ip_addr,
+        Err(_) => match dns_lookup_first_ipv4_addr(&hostname).await {
+            None => return Err(String::from(format!("{hostname}: Hostname not resolvable."))),
+            Some(ip_addr) => ip_addr,
+        }
     };
 
     let (parser, task_generator): (ProbeReplyParser, Box<dyn ProbeTaskGenerator>) = match traceroute_options.probe_method {
