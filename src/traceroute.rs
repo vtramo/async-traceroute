@@ -1,6 +1,8 @@
 use std::cell::RefCell;
 use std::cmp::min;
+use std::collections::HashMap;
 use std::future::Future;
+use std::io::Write;
 use std::net::IpAddr;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -19,8 +21,8 @@ use crate::traceroute::utils::dns;
 pub mod utils;
 pub mod terminal;
 pub mod probe;
-pub mod builder;
 mod async_socket;
+pub mod builder;
 
 pub struct Traceroute {
     target_ip_address: IpAddr,
@@ -44,7 +46,7 @@ impl Traceroute {
         max_wait_probe: Duration,
         is_active_dns_lookup: bool,
         probe_task_generator: Box<dyn ProbeTaskGenerator>,
-        icmp_probe_response_sniffer: IcmpProbeResponseSniffer
+        icmp_probe_response_sniffer: IcmpProbeResponseSniffer,
     ) -> Self {
         Self {
             target_ip_address: ip_addr,
@@ -59,8 +61,8 @@ impl Traceroute {
             icmp_probe_response_sniffer: Arc::new(icmp_probe_response_sniffer),
         }
     }
-    
-    pub fn trace(self) -> impl Stream<Item = Result<ProbeResult, ProbeError>> {
+
+    pub fn trace(self) -> impl Stream<Item=Result<ProbeResult, ProbeError>> {
         let mut probe_tasks = JoinSet::new();
 
         for _ in 0..self.sim_queries {
@@ -74,8 +76,11 @@ impl Traceroute {
             icmp_probe_response_sniffer.sniff().await
         });
 
-        let mut target_address_encountered_counter = 0;
         let mut stop_send_probes = false;
+        let mut query_count_by_ttl = HashMap::<u8, u16>::new();
+        let mut ttl_target_address = u8::MAX;
+        let mut target_address_found = false;
+        println!("{:?}", self.target_ip_address);
         stream! {
             loop {
                 if *self.current_ttl.borrow() > self.max_ttl {
@@ -84,28 +89,45 @@ impl Traceroute {
 
                 select! {
                     Some(Ok(probe_result)) = probe_tasks.join_next() => {
-                        match probe_result {
+                        let (probe_result, ttl) = match probe_result {
                             Ok(mut probe_result) => {
                                 if self.is_active_dns_lookup {
                                     Self::reverse_dns_lookup(&mut probe_result).await;
                                 }
 
-                                if probe_result.from_address() == self.target_ip_address {
-                                    target_address_encountered_counter += 1;
-                                    if target_address_encountered_counter >= self.nqueries {
-                                        stop_send_probes = true;
-                                    }
+                                if !target_address_found && probe_result.from_address() == self.target_ip_address {
+                                    ttl_target_address = probe_result.ttl();
+                                    target_address_found = true;
                                 }
-                                
-                                yield Ok(probe_result);
 
-                                if !stop_send_probes {
-                                    let probe_task = self.generate_probe_task(&self.icmp_probe_response_sniffer);
-                                    self.increment_ttl_query_counter();
-                                    probe_tasks.spawn(probe_task);
-                                }
+                                let ttl = probe_result.ttl();
+                                (Ok(probe_result), ttl)
                             },
-                            Err(_) => yield probe_result,
+                            Err(probe_error) => {
+                                let ttl = probe_error.get_ttl();
+                                (Err(probe_error), ttl)
+                            },
+                        };
+
+                        let query_count = query_count_by_ttl
+                            .entry(ttl)
+                            .or_insert(0);
+                        *query_count += 1;
+
+                        if ttl <= ttl_target_address {
+                            yield probe_result;
+                        }
+
+                        if ttl == ttl_target_address && *query_count == self.nqueries {
+                            stop_send_probes = true;
+                        }
+
+                        if !stop_send_probes {
+                            let probe_task =
+                                self.generate_probe_task(&self.icmp_probe_response_sniffer);
+
+                            self.increment_ttl_query_counter();
+                            probe_tasks.spawn(probe_task);
                         }
                     },
                     else => break
@@ -115,14 +137,13 @@ impl Traceroute {
     }
 
     fn generate_probe_task(
-        &self, 
-        icmp_probe_response_sniffer: &IcmpProbeResponseSniffer
+        &self,
+        icmp_probe_response_sniffer: &IcmpProbeResponseSniffer,
     ) -> Pin<Box<impl Future<Output=Result<ProbeResult, ProbeError>>>> {
-        
         let mut probe_task_generator = self.probe_task_generator.borrow_mut();
         match probe_task_generator.generate_probe_task(
             self.target_ip_address,
-            &icmp_probe_response_sniffer
+            &icmp_probe_response_sniffer,
         ) {
             Ok((_, mut probe_task)) => {
                 let current_ttl = *self.current_ttl.borrow();
@@ -145,18 +166,18 @@ impl Traceroute {
             *current_ttl += 1;
         }
     }
-    
+
     async fn reverse_dns_lookup(probe_result: &mut ProbeResult) {
         let ip_addr = &IpAddr::V4(probe_result.from_address());
         if let Some(hostname) = dns::reverse_dns_lookup_first_hostname(ip_addr).await {
             probe_result.set_hostname(&hostname);
         }
     }
-    
+
     pub fn get_nqueries(&self) -> u16 {
         self.nqueries
     }
-    
+
     pub fn get_max_ttl(&self) -> u8 {
         self.max_ttl
     }
