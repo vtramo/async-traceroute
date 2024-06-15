@@ -1,4 +1,4 @@
-use std::fmt::{Display};
+use std::fmt::Display;
 use std::io;
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
@@ -127,4 +127,12 @@ impl CompletableProbe {
             hostname: None,
         })
     }
+}
+
+#[derive(Debug, clap::ValueEnum, Clone, Default)]
+pub enum ProbeMethod {
+    #[default]
+    UDP,
+    TCP,
+    ICMP,
 }

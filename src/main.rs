@@ -4,20 +4,9 @@ use std::time::Duration;
 
 use clap::Parser;
 
-use traceroute_rust::generator::{IcmpProbeTaskGenerator, ProbeTaskGenerator, TcpProbeTaskGenerator, UdpProbeTaskGenerator};
-use traceroute_rust::parser::{IcmpProbeResponseParser, ProbeReplyParser, TcpProbeResponseParser, UdpProbeResponseParser};
-use traceroute_rust::sniffer::IcmpProbeResponseSniffer;
-use traceroute_rust::Traceroute;
-use traceroute_rust::TracerouteTerminal;
-use traceroute_rust::utils::dns::dns_lookup_first_ipv4_addr;
-
-#[derive(Debug, clap::ValueEnum, Clone, Default)]
-pub enum ProbeMethod {
-    #[default]
-    UDP,
-    TCP,
-    ICMP,
-}
+use async_traceroute::{ProbeMethod, TracerouteBuilder};
+use async_traceroute::TracerouteTerminal;
+use async_traceroute::utils::dns::dns_lookup_first_ipv4_addr;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -64,27 +53,40 @@ async fn main() -> Result<(), String> {
         }
     };
 
-    let (parser, task_generator): (ProbeReplyParser, Box<dyn ProbeTaskGenerator>) = match traceroute_options.probe_method {
-        ProbeMethod::TCP => (ProbeReplyParser::TCP(TcpProbeResponseParser), Box::new(TcpProbeTaskGenerator::new())),
-        ProbeMethod::UDP => (ProbeReplyParser::UDP(UdpProbeResponseParser), Box::new(UdpProbeTaskGenerator::new(33434))),
-        ProbeMethod::ICMP => (ProbeReplyParser::ICMP(IcmpProbeResponseParser), Box::new(IcmpProbeTaskGenerator::new().unwrap())),
+    let traceroute = match traceroute_options.probe_method {
+        ProbeMethod::TCP => TracerouteBuilder::tcp()
+            .target_ip_address(ip_addr)
+            .max_ttl(traceroute_options.max_hops)
+            .queries_per_hop(traceroute_options.queries)
+            .simultaneous_queries(traceroute_options.sim_queries)
+            .max_wait_probe(traceroute_options.wait)
+            .active_dns_lookup(traceroute_options.dns_lookup)
+            .initial_destination_port(80)
+            .build(),
+        ProbeMethod::UDP => TracerouteBuilder::udp()
+            .target_ip_address(ip_addr)
+            .max_ttl(traceroute_options.max_hops)
+            .queries_per_hop(traceroute_options.queries)
+            .simultaneous_queries(traceroute_options.sim_queries)
+            .max_wait_probe(traceroute_options.wait)
+            .active_dns_lookup(traceroute_options.dns_lookup)
+            .initial_destination_port(33434)
+            .build(),
+        ProbeMethod::ICMP => TracerouteBuilder::icmp()
+            .target_ip_address(ip_addr)
+            .max_ttl(traceroute_options.max_hops)
+            .queries_per_hop(traceroute_options.queries)
+            .simultaneous_queries(traceroute_options.sim_queries)
+            .max_wait_probe(traceroute_options.wait)
+            .active_dns_lookup(traceroute_options.dns_lookup)
+            .initial_sequence_number(1)
+            .build(),
     };
 
-    let icmp_sniffer = match IcmpProbeResponseSniffer::new(parser) {
-        Ok(icmp_sniffer) => icmp_sniffer,
-        Err(error) => return Err(String::from(&format!("{}", error.to_string())))
+    let traceroute = match traceroute {
+        Ok(traceroute) => traceroute,
+        Err(error) => return Err(error),
     };
-
-    let traceroute = Traceroute::new(
-        ip_addr,
-        traceroute_options.max_hops,
-        traceroute_options.queries,
-        traceroute_options.sim_queries,
-        traceroute_options.wait,
-        traceroute_options.dns_lookup,
-        task_generator,
-        icmp_sniffer
-    );
 
     println!("traceroute to {ip_addr} ({hostname}), {} hops max", traceroute_options.max_hops);
     let traceroute_terminal = TracerouteTerminal::new(traceroute);

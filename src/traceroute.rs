@@ -19,6 +19,7 @@ use crate::traceroute::utils::dns;
 pub mod utils;
 pub mod terminal;
 pub mod probe;
+pub mod builder;
 mod async_socket;
 
 pub struct Traceroute {

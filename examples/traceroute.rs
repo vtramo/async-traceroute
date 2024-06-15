@@ -4,11 +4,11 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::str::FromStr;
 use std::time::Duration;
 
-use traceroute_rust::traceroute::probe::generator::{IcmpProbeTaskGenerator, ProbeTaskGenerator, TcpProbeTaskGenerator, UdpProbeTaskGenerator};
-use traceroute_rust::traceroute::probe::parser::{IcmpProbeResponseParser, ProbeReplyParser, TcpProbeResponseParser, UdpProbeResponseParser};
-use traceroute_rust::traceroute::probe::sniffer::IcmpProbeResponseSniffer;
-use traceroute_rust::traceroute::Traceroute;
-use traceroute_rust::TracerouteTerminal;
+use async_traceroute::traceroute::probe::generator::{IcmpProbeTaskGenerator, ProbeTaskGenerator, TcpProbeTaskGenerator, UdpProbeTaskGenerator};
+use async_traceroute::traceroute::probe::parser::{IcmpProbeResponseParser, ProbeReplyParser, TcpProbeResponseParser, UdpProbeResponseParser};
+use async_traceroute::traceroute::probe::sniffer::IcmpProbeResponseSniffer;
+use async_traceroute::traceroute::Traceroute;
+use async_traceroute::TracerouteTerminal;
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
