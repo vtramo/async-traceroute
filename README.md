@@ -29,7 +29,7 @@ use async_traceroute::utils::dns::dns_lookup_first_ipv4_addr;
 #[tokio::main]
 async fn main() -> Result<(), String> {
     let ip_addr = match dns_lookup_first_ipv4_addr("google.com").await {
-        None => return Err(String::from("Hostname non risolvibile")),
+        None => return Err(String::from("Hostname not resolvable")),
         Some(ip_addr) => ip_addr,
     };
     
