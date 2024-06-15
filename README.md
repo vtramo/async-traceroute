@@ -1,4 +1,4 @@
-# traceroute-rust
+# async-traceroute
 
 This is an implementation of the Traceroute program written in Rust.
 ```
@@ -17,7 +17,46 @@ Options:
   -h, --help                         Print help
   -V, --version                      Print version
 ```
+You can integrate `async-traceroute` into your project by using it as a library. Here is a code example showing how to
+perform a traceroute to google.com:
+```rust
+use futures::pin_mut;
+use futures_util::StreamExt;
 
+use async_traceroute::TracerouteBuilder;
+use async_traceroute::utils::dns::dns_lookup_first_ipv4_addr;
+
+#[tokio::main]
+async fn main() -> Result<(), String> {
+    let ip_addr = match dns_lookup_first_ipv4_addr("google.com").await {
+        None => return Err(String::from("Hostname non risolvibile")),
+        Some(ip_addr) => ip_addr,
+    };
+    
+    let traceroute = TracerouteBuilder::udp()
+        .target_ip_address(ip_addr)
+        .max_ttl(15)
+        .queries_per_hop(3)
+        .max_wait_probe(Duration::from_secs(3))
+        .simultaneous_queries(16)
+        .active_dns_lookup(true)
+        .initial_destination_port(33434)
+        .build();
+    
+    let traceroute_stream = match traceroute {
+        Ok(traceroute) => traceroute.trace(),
+        Err(error) => return Err(error),
+    };
+
+    pin_mut!(traceroute_stream);
+    
+    while let Some(probe_result) = traceroute_stream.next().await {
+        println!("{:?}", probe_result);
+    }
+
+    Ok(())
+}
+```
 ## What is Traceroute
 Traceroute allows you to see the path an IP packet takes from one host to another. It uses the **TTL (Time To Live)** field
 in the IP packet to elicit an **ICMP Time to Live Exceeded** message from each router along the path. Each router that handles the
