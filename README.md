@@ -6,6 +6,15 @@
 # async-traceroute [![Crates.io][crates-badge]][crates-url] ![License][license-badge]
 
 Async Traceroute library/command-line tool.
+## What is Traceroute
+Traceroute allows you to see the path an IP packet takes from one host to another. It uses the **TTL (Time To Live)** field
+in the IP packet to elicit an **ICMP Time to Live Exceeded** message from each router along the path. Each router that handles the
+packet decreases the TTL field, which effectively acts as a Hop Counter. When a router receives an IP datagram with the
+TTL field set to 0, it responds with an ICMP Time to Live Exceeded that reveals its IP address.
+
+Several traceroute probe methods exist. This diagram shows how the UDP-based traceroute method works.
+![traceroute.svg](traceroute.svg)
+## Usage
 ```
 Usage: traceroute [OPTIONS] <HOST>
 
@@ -72,11 +81,16 @@ Or add the following line to your Cargo.toml:
 ```
 async-traceroute = "0.1.0"
 ```
-## What is Traceroute
-Traceroute allows you to see the path an IP packet takes from one host to another. It uses the **TTL (Time To Live)** field
-in the IP packet to elicit an **ICMP Time to Live Exceeded** message from each router along the path. Each router that handles the
-packet decreases the TTL field, which effectively acts as a Hop Counter. When a router receives an IP datagram with the
-TTL field set to 0, it responds with an ICMP Time to Live Exceeded that reveals its IP address. 
+## Docker
+Build image:
+```
+docker build -t async-traceroute:${VERSION} .
+```
+Docker run:
+```
+$ docker run async-traceroute:${VERSION} --help
+Async Traceroute library/command-line tool
 
-Several traceroute probe methods exist. This diagram shows how the UDP-based traceroute method works.
-![traceroute.svg](traceroute.svg)
+Usage: traceroute [OPTIONS] <HOST>
+...
+```
