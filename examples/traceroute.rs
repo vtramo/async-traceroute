@@ -1,43 +1,37 @@
-use std::env::args;
-use std::io;
-use std::net::{IpAddr, Ipv4Addr};
-use std::str::FromStr;
 use std::time::Duration;
 
-use async_traceroute::traceroute::probe::generator::{IcmpProbeTaskGenerator, ProbeTaskGenerator, TcpProbeTaskGenerator, UdpProbeTaskGenerator};
-use async_traceroute::traceroute::probe::parser::{IcmpProbeResponseParser, ProbeReplyParser, TcpProbeResponseParser, UdpProbeResponseParser};
-use async_traceroute::traceroute::probe::sniffer::IcmpProbeResponseSniffer;
-use async_traceroute::traceroute::Traceroute;
-use async_traceroute::TracerouteTerminal;
+use futures::pin_mut;
+use futures_util::StreamExt;
+
+use async_traceroute::{dns_lookup_first_ipv4_addr, TracerouteBuilder};
 
 #[tokio::main]
-async fn main() -> io::Result<()> {
-    let probe_method = args().last().unwrap().to_owned();
-    
-    let (parser, generator): (ProbeReplyParser, Box<dyn ProbeTaskGenerator>) = match probe_method.as_str() {
-        "TCP" => (ProbeReplyParser::TCP(TcpProbeResponseParser), Box::new(TcpProbeTaskGenerator::new())),
-        "UDP" => (ProbeReplyParser::UDP(UdpProbeResponseParser), Box::new(UdpProbeTaskGenerator::new(33434))),
-        "ICMP" => (ProbeReplyParser::ICMP(IcmpProbeResponseParser), Box::new(IcmpProbeTaskGenerator::new().unwrap())),
-        _ => panic!(),
+async fn main() -> Result<(), String> {
+    let ip_addr = match dns_lookup_first_ipv4_addr("google.com").await {
+        None => return Err(String::from("Hostname not resolvable")),
+        Some(ip_addr) => ip_addr,
     };
-    
-    let ip_addr = IpAddr::V4(Ipv4Addr::from_str("216.58.204.238").unwrap());
 
-    let icmp_sniffer = IcmpProbeResponseSniffer::new(parser)?;
+    println!("{:?}", ip_addr);
+    let traceroute = TracerouteBuilder::udp()
+        .target_ip_address(ip_addr)
+        .max_ttl(15)
+        .queries_per_hop(3)
+        .max_wait_probe(Duration::from_secs(3))
+        .simultaneous_queries(16)
+        .active_dns_lookup(true)
+        .initial_destination_port(33434)
+        .build();
 
-    let traceroute = Traceroute::new(
-        ip_addr,
-        20,
-        3,
-        16,
-        Duration::from_secs(3),
-        true,
-        generator,
-        icmp_sniffer
-    );
-    
-    let traceroute_terminal = TracerouteTerminal::new(traceroute);
-    traceroute_terminal.print_trace().await;
+    let traceroute_stream = match traceroute {
+        Ok(traceroute) => traceroute.trace(),
+        Err(error) => return Err(error),
+    };
+
+    pin_mut!(traceroute_stream);
+    while let Some(probe_result) = traceroute_stream.next().await {
+        println!("{:?}", probe_result);
+    }
 
     Ok(())
 }

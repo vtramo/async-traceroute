@@ -1,10 +1,10 @@
 use std::net::IpAddr;
 use std::time::Duration;
 
-use crate::generator::{IcmpProbeTaskGenerator, ProbeTaskGenerator, TcpProbeTaskGenerator, UdpProbeTaskGenerator};
-use crate::parser::{IcmpProbeResponseParser, ProbeReplyParser, TcpProbeResponseParser, UdpProbeResponseParser};
-use crate::sniffer::IcmpProbeResponseSniffer;
 use crate::Traceroute;
+use crate::traceroute::probe::generator::{IcmpProbeTaskGenerator, ProbeTaskGenerator, TcpProbeTaskGenerator, UdpProbeTaskGenerator};
+use crate::traceroute::probe::parser::{IcmpProbeResponseParser, ProbeReplyParser, TcpProbeResponseParser, UdpProbeResponseParser};
+use crate::traceroute::probe::sniffer::IcmpProbeResponseSniffer;
 
 pub struct TracerouteBuilder;
 

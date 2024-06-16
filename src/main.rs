@@ -4,9 +4,8 @@ use std::time::Duration;
 
 use clap::Parser;
 
-use async_traceroute::{ProbeMethod, TracerouteBuilder};
+use async_traceroute::{dns_lookup_first_ipv4_addr, ProbeMethod, TracerouteBuilder};
 use async_traceroute::TracerouteTerminal;
-use async_traceroute::utils::dns::dns_lookup_first_ipv4_addr;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]

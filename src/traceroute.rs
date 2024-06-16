@@ -2,7 +2,6 @@ use std::cell::RefCell;
 use std::cmp::min;
 use std::collections::HashMap;
 use std::future::Future;
-use std::io::Write;
 use std::net::IpAddr;
 use std::pin::Pin;
 use std::sync::Arc;
