@@ -1,6 +1,11 @@
-# async-traceroute
+[crates-url]: https://crates.io/crates/async-traceroute
+[license-badge]: https://img.shields.io/crates/l/async-traceroute.svg
+[crates-badge]: https://img.shields.io/crates/v/async-traceroute.svg
+[github-url]: https://github.com/vtramo/async-traceroute
 
-This is an implementation of the Traceroute program written in Rust.
+# async-traceroute [![Crates.io][crates-badge]][crates-url] ![License][license-badge]
+
+Async Traceroute library/command-line tool.
 ```
 Usage: traceroute [OPTIONS] <HOST>
 
@@ -56,6 +61,16 @@ async fn main() -> Result<(), String> {
 
     Ok(())
 }
+
+```
+## Install
+Run the following Cargo command in your project directory:
+```
+cargo add async-traceroute
+```
+Or add the following line to your Cargo.toml:
+```
+async-traceroute = "0.1.0"
 ```
 ## What is Traceroute
 Traceroute allows you to see the path an IP packet takes from one host to another. It uses the **TTL (Time To Live)** field
@@ -65,9 +80,3 @@ TTL field set to 0, it responds with an ICMP Time to Live Exceeded that reveals 
 
 Several traceroute probe methods exist. This diagram shows how the UDP-based traceroute method works.
 ![traceroute.svg](traceroute.svg)
-
-## Main Libraries
-- [tokio](https://tokio.rs/) (async runtime)
-- [socket2](https://crates.io/crates/socket2) (includes raw sockets)
-- [libpnet](https://github.com/libpnet/libpnet) (API for low level networking)
-- [clap](https://docs.rs/clap/latest/clap/) (command-line argument parser)
