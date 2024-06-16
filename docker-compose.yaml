@@ -1,9 +1,11 @@
 version: '3.8'
 
 services:
-  async-rust-icmp:
-    image: traceroute-rust
-    container_name: traceroute-rust
+  async-traceroute:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: async-traceroute
     command:
       - google.com
     cap_add:
