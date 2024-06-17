@@ -1,10 +1,13 @@
 use std::net::IpAddr;
 use std::time::Duration;
 
+use pnet::datalink::NetworkInterface;
+
 use crate::Traceroute;
 use crate::traceroute::probe::generator::{IcmpProbeTaskGenerator, ProbeTaskGenerator, TcpProbeTaskGenerator, UdpProbeTaskGenerator};
 use crate::traceroute::probe::parser::{IcmpProbeResponseParser, ProbeReplyParser, TcpProbeResponseParser, UdpProbeResponseParser};
 use crate::traceroute::probe::sniffer::IcmpProbeResponseSniffer;
+use crate::traceroute::utils::packet_utils::{default_interface, get_interface};
 
 pub struct TracerouteBuilder;
 
@@ -26,12 +29,14 @@ impl TracerouteBuilder {
 }
 
 struct TracerouteBaseBuilder {
-    target_ip_address: Option<IpAddr>,
+    destination_address: Option<IpAddr>,
     max_ttl: u8,
     nqueries: u16,
     sim_queries: u16,
     max_wait_probe: Duration,
     is_active_dns_lookup: bool,
+    interface: Option<NetworkInterface>, 
+    error: Option<String>,
 }
 
 impl TracerouteBaseBuilder {
@@ -43,17 +48,19 @@ impl TracerouteBaseBuilder {
 
     fn new() -> Self {
         Self {
-            target_ip_address: None,
+            destination_address: None,
             max_ttl: Self::DEFAULT_MAX_TTL,
             nqueries: Self::DEFAULT_QUERIES_PER_HOP,
             sim_queries: Self::DEFAULT_SIM_QUERIES,
             max_wait_probe: Self::DEFAULT_MAX_WAIT_PROBE,
             is_active_dns_lookup: Self::DEFAULT_IS_ACTIVE_DNS_LOOKUP,
+            interface: None,
+            error: None,
         }
     }
     
-    fn target_ip_address(&mut self, ip_addr: IpAddr) {
-        self.target_ip_address = Some(ip_addr);
+    fn destination_address(&mut self, destination_address: IpAddr) {
+        self.destination_address = Some(destination_address);
     }
     
     fn max_ttl(&mut self, max_ttl: u8) {
@@ -76,14 +83,38 @@ impl TracerouteBaseBuilder {
         self.is_active_dns_lookup = active_dns_lookup;
     }
     
+    fn network_interface(&mut self, interface: &str) {
+        match get_interface(interface) {
+            Some(net_interface) => self.interface = Some(net_interface),
+            None => self.error = Some(format!("Network interface {} not found", interface))
+        };
+    }
+    
     fn build(
         self,
         probe_task_generator: Box<dyn ProbeTaskGenerator>,
         probe_reply_parser: ProbeReplyParser,
     ) -> Result<Traceroute, String> {
-        if self.target_ip_address.is_none() {
-            return Err(String::from("Target ip address required!"));
+        if self.error.is_some() {
+            return Err(self.error.unwrap())
         }
+
+        if self.destination_address.is_none() {
+            return Err(String::from("Destination address required!"));
+        }
+        
+        let source_address = match self.interface {
+            None => match default_interface() {
+                None => return Err(String::from("No network interface found!")),
+                Some(network_interface) => match network_interface.ips.first() {
+                    None => return Err(String::from("No network interface found!")),
+                    Some(ip_network) => ip_network.ip()                }
+            },
+            Some(network_interface) => match network_interface.ips.first() {
+                None => return Err(String::from("No network interface found!")),
+                Some(ip_network) => ip_network.ip()
+            }
+        };
 
         let icmp_sniffer = match IcmpProbeResponseSniffer::new(probe_reply_parser) {
             Ok(icmp_sniffer) => icmp_sniffer,
@@ -91,7 +122,8 @@ impl TracerouteBaseBuilder {
         };
         
         Ok(Traceroute::new(
-            self.target_ip_address.unwrap(),
+            source_address,
+            self.destination_address.unwrap(),
             self.max_ttl,
             self.nqueries,
             self.sim_queries,
@@ -123,8 +155,8 @@ impl TracerouteUdpBuilder {
         self
     }
     
-    pub fn target_ip_address(mut self, ip_addr: IpAddr) -> Self {
-        self.traceroute_base_builder.target_ip_address(ip_addr);
+    pub fn destination_address(mut self, destination_address: IpAddr) -> Self {
+        self.traceroute_base_builder.destination_address(destination_address);
         self
     }
 
@@ -150,6 +182,11 @@ impl TracerouteUdpBuilder {
 
     pub fn active_dns_lookup(mut self, active_dns_lookup: bool) -> Self {
         self.traceroute_base_builder.active_dns_lookup(active_dns_lookup);
+        self
+    }
+
+    pub fn network_interface(mut self, interface: &str) -> Self {
+        self.traceroute_base_builder.network_interface(interface);
         self
     }
     
@@ -183,8 +220,8 @@ impl TracerouteTcpBuilder {
         self
     }
     
-    pub fn target_ip_address(mut self, ip_addr: IpAddr) -> Self {
-        self.traceroute_base_builder.target_ip_address(ip_addr);
+    pub fn destination_address(mut self, destination_address: IpAddr) -> Self {
+        self.traceroute_base_builder.destination_address(destination_address);
         self
     }
 
@@ -210,6 +247,11 @@ impl TracerouteTcpBuilder {
 
     pub fn active_dns_lookup(mut self, active_dns_lookup: bool) -> Self {
         self.traceroute_base_builder.active_dns_lookup(active_dns_lookup);
+        self
+    }
+
+    pub fn network_interface(mut self, interface: &str) -> Self {
+        self.traceroute_base_builder.network_interface(interface);
         self
     }
 
@@ -243,8 +285,8 @@ impl TracerouteIcmpBuilder {
         self
     }
     
-    pub fn target_ip_address(mut self, ip_addr: IpAddr) -> Self {
-        self.traceroute_base_builder.target_ip_address(ip_addr);
+    pub fn destination_address(mut self, destination_address: IpAddr) -> Self {
+        self.traceroute_base_builder.destination_address(destination_address);
         self
     }
 
@@ -270,6 +312,11 @@ impl TracerouteIcmpBuilder {
 
     pub fn active_dns_lookup(mut self, active_dns_lookup: bool) -> Self {
         self.traceroute_base_builder.active_dns_lookup(active_dns_lookup);
+        self
+    }
+    
+    pub fn network_interface(mut self, interface: &str) -> Self {
+        self.traceroute_base_builder.network_interface(interface);
         self
     }
 

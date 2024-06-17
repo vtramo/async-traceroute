@@ -24,7 +24,8 @@ mod async_socket;
 pub mod builder;
 
 pub struct Traceroute {
-    target_ip_address: IpAddr,
+    source_address: IpAddr,
+    destination_address: IpAddr,
     max_ttl: u8,
     nqueries: u16,
     sim_queries: u16,
@@ -38,7 +39,8 @@ pub struct Traceroute {
 
 impl Traceroute {
     pub fn new(
-        ip_addr: IpAddr,
+        source_address: IpAddr,
+        destination_address: IpAddr,
         max_ttl: u8,
         nqueries: u16,
         sim_queries: u16,
@@ -48,7 +50,8 @@ impl Traceroute {
         icmp_probe_response_sniffer: IcmpProbeResponseSniffer,
     ) -> Self {
         Self {
-            target_ip_address: ip_addr,
+            source_address,
+            destination_address,
             max_ttl,
             nqueries,
             sim_queries: min(sim_queries, (max_ttl as u16) * nqueries),
@@ -79,7 +82,7 @@ impl Traceroute {
         let mut query_count_by_ttl = HashMap::<u8, u16>::new();
         let mut ttl_target_address = u8::MAX;
         let mut target_address_found = false;
-        println!("{:?}", self.target_ip_address);
+        println!("{:?}", self.destination_address);
         stream! {
             loop {
                 if *self.current_ttl.borrow() > self.max_ttl {
@@ -94,7 +97,7 @@ impl Traceroute {
                                     Self::reverse_dns_lookup(&mut probe_result).await;
                                 }
 
-                                if !target_address_found && probe_result.from_address() == self.target_ip_address {
+                                if !target_address_found && probe_result.from_address() == self.destination_address {
                                     ttl_target_address = probe_result.ttl();
                                     target_address_found = true;
                                 }
@@ -141,7 +144,8 @@ impl Traceroute {
     ) -> Pin<Box<impl Future<Output=Result<ProbeResult, ProbeError>>>> {
         let mut probe_task_generator = self.probe_task_generator.borrow_mut();
         match probe_task_generator.generate_probe_task(
-            self.target_ip_address,
+            self.source_address,
+            self.destination_address,
             &icmp_probe_response_sniffer,
         ) {
             Ok((_, mut probe_task)) => {

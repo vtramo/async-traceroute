@@ -17,7 +17,7 @@ use crate::traceroute::async_socket::AsyncSocket;
 use crate::traceroute::probe::{CompletableProbe, ProbeError, ProbeId, ProbeResponse, ProbeResult};
 use crate::traceroute::utils::bytes::ToBytes;
 use crate::traceroute::utils::packet_utils;
-use crate::traceroute::utils::packet_utils::{build_icmpv4_echo_request, get_default_ipv4_addr_interface, get_default_ipv6_addr_interface, icmpv4_checksum, internet_checksum, IpDatagram};
+use crate::traceroute::utils::packet_utils::{build_icmpv4_echo_request, icmpv4_checksum, internet_checksum, IpDatagram};
 
 pub type ProbeResponseReceiver = tokio::sync::oneshot::Receiver<ProbeResponse>;
 
@@ -35,6 +35,7 @@ pub trait ProbeTask: Send {
 pub struct UdpProbeTask {
     id: ProbeId,
     socket: AsyncSocket,
+    source_address: IpAddr,
     destination_address: IpAddr,
     destination_port: u16,
     probe_response_receiver: Option<ProbeResponseReceiver>,
@@ -81,6 +82,7 @@ impl ProbeTask for UdpProbeTask {
 
 impl UdpProbeTask {
     pub fn new(
+        source_address: IpAddr,
         destination_address: IpAddr,
         destination_port: u16,
         probe_response_receiver: ProbeResponseReceiver,
@@ -88,20 +90,23 @@ impl UdpProbeTask {
         Ok(Self {
             id: destination_port.to_string(),
             socket: Self::build_socket(
+                source_address,
                 if destination_address.is_ipv4() { 
                     Domain::IPV4 
                 } else { 
                     Domain::IPV6 
                 }
             )?,
+            source_address,
             destination_address,
             destination_port,
             probe_response_receiver: Some(probe_response_receiver),
         })
     }
 
-    fn build_socket(domain: Domain) -> io::Result<AsyncSocket> {
+    fn build_socket(source_address: IpAddr, domain: Domain) -> io::Result<AsyncSocket> {
         let socket = AsyncSocket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
+        socket.bind(SocketAddr::new(source_address, 0))?;
         Ok(socket)
     }
 
@@ -121,6 +126,7 @@ pub struct TcpProbeTask {
     ip_id: u16,
     isn: u32,
     socket: AsyncSocket,
+    source_address: IpAddr,
     destination_address: IpAddr,
     destination_port: u16,
     probe_response_receiver: Option<ProbeResponseReceiver>,
@@ -185,6 +191,7 @@ impl ProbeTask for TcpProbeTask {
 impl TcpProbeTask {
     pub fn new(
         ip_id: u16,
+        source_address: IpAddr,
         destination_address: IpAddr,
         destination_port: u16,
         probe_response_receiver: ProbeResponseReceiver,
@@ -200,6 +207,7 @@ impl TcpProbeTask {
                     Domain::IPV6 
                 } 
             )?,
+            source_address,
             destination_address,
             destination_port,
             probe_response_receiver: Some(probe_response_receiver),
@@ -244,12 +252,18 @@ impl TcpProbeTask {
     fn build_empty_ip_datagram(&self, ttl: u8, ip_id: u16) -> IpDatagram {
         match self.destination_address {
             IpAddr::V4(destination_ipv4) => {
-                let source_address = get_default_ipv4_addr_interface();
-                IpDatagram::V4(Self::build_empty_ipv4_datagram(ttl, source_address, destination_ipv4, ip_id))
+                if let IpAddr::V4(ipv4_address) = self.source_address {
+                    IpDatagram::V4(Self::build_empty_ipv4_datagram(ttl, ipv4_address, destination_ipv4, ip_id))
+                } else {
+                    panic!("Expected IPV4 but found IPV6!");
+                }
             },
             IpAddr::V6(destination_ipv6) => {
-                let source_ipv4 = get_default_ipv6_addr_interface();
-                IpDatagram::V6(Self::build_empty_ipv6_datagram(ttl, source_ipv4, destination_ipv6))
+                if let IpAddr::V6(ipv6_address) = self.source_address {
+                    IpDatagram::V6(Self::build_empty_ipv6_datagram(ttl, ipv6_address, destination_ipv6, ip_id))
+                } else {
+                    panic!("Expected IPV6 but found IPV4!");
+                }
             },
         }
     }
@@ -279,7 +293,12 @@ impl TcpProbeTask {
         }
     }
 
-    fn build_empty_ipv6_datagram(_ttl: u8, _source_address: Ipv6Addr, _destination_address: Ipv6Addr) -> Ipv6 {
+    fn build_empty_ipv6_datagram(
+        ttl: u8, 
+        source_address: Ipv6Addr, 
+        destination_address: Ipv6Addr, 
+        ip_id: u16
+    ) -> Ipv6 {
         todo!()
     }
     
@@ -314,6 +333,7 @@ pub struct IcmpProbeTask {
     icmp_id: u16,
     icmp_sqn: u16,
     tx_to_icmp_raw_socket: Sender<(Vec<u8>, SocketAddr)>,
+    source_address: IpAddr,
     destination_address: IpAddr,
     probe_response_receiver: Option<ProbeResponseReceiver>,
 }
@@ -360,6 +380,7 @@ impl IcmpProbeTask {
     pub fn new(
         icmp_id: u16,
         icmp_sqn: u16,
+        source_address: IpAddr,
         destination_address: IpAddr,
         probe_response_receiver: ProbeResponseReceiver,
         tx_to_icmp_raw_socket: Sender<(Vec<u8>, SocketAddr)>,
@@ -369,6 +390,7 @@ impl IcmpProbeTask {
             icmp_id,
             icmp_sqn,
             tx_to_icmp_raw_socket,
+            source_address,
             destination_address,
             probe_response_receiver: Some(probe_response_receiver),
         }
@@ -419,7 +441,11 @@ impl IcmpProbeTask {
             ttl,
             next_level_protocol: Icmp,
             checksum: 0,
-            source: Ipv4Addr::UNSPECIFIED,
+            source: if let IpAddr::V4(ipv4_addr) = self.source_address {
+                ipv4_addr
+            } else {
+                panic!("Expected IPV4 but found IPV6!");
+            },
             destination: destination_address,
             options: vec![],
             payload: vec![]

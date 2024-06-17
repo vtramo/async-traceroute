@@ -17,13 +17,14 @@
 //!     };
 //! 
 //!     let traceroute = TracerouteBuilder::udp()
-//!         .target_ip_address(ip_addr)
+//!         .destination_address(ip_addr)
 //!         .max_ttl(15)
 //!         .queries_per_hop(3)
 //!         .max_wait_probe(Duration::from_secs(3))
 //!         .simultaneous_queries(16)
 //!         .active_dns_lookup(true)
 //!         .initial_destination_port(33434)
+//!         .network_interface("eth0")
 //!         .build();
 //! 
 //!     let traceroute_stream = match traceroute {
@@ -48,10 +49,14 @@ pub use traceroute::probe::ProbeMethod;
 pub use traceroute::terminal::TracerouteTerminal;
 #[doc(inline)]
 pub use traceroute::Traceroute;
+
+
 #[doc(inline)]
 pub use traceroute::utils::dns::dns_lookup_first_ipv4_addr;
 #[doc(inline)]
 pub use traceroute::utils::dns::dns_lookup;
+pub use traceroute::utils::packet_utils::get_interface;
+pub use traceroute::utils::packet_utils::default_interface;
 
 mod traceroute;
 

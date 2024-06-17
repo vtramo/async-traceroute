@@ -1,7 +1,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::time::UNIX_EPOCH;
 
-use pnet::datalink::interfaces;
+use pnet::datalink::{interfaces, NetworkInterface};
 use pnet::packet::FromPacket;
 use pnet::packet::icmp::{Icmp, IcmpCode, IcmpPacket, IcmpType};
 use pnet::packet::icmp::echo_request::{EchoRequest, EchoRequestPacket};
@@ -185,6 +185,7 @@ pub fn icmpv4_checksum(icmp: &Icmp) -> u16 {
 
 pub fn get_default_ipv4_addr_interface() -> Ipv4Addr {
     let interfaces = interfaces();
+    
     let first_interface = interfaces.get(1).unwrap(); // todo
     let ips = &first_interface.ips;
     let ip_addr = ips.get(0).unwrap().ip(); // todo
@@ -192,6 +193,23 @@ pub fn get_default_ipv4_addr_interface() -> Ipv4Addr {
         IpAddr::V4(ipv4_addr) => ipv4_addr,
         IpAddr::V6(_ipv6_addr) => panic!("")
     }
+}
+
+pub fn default_interface() -> Option<NetworkInterface> {
+    interfaces()
+        .iter()
+        .find(|e| e. is_up() && !e. is_loopback() && !e. ips. is_empty())
+        .cloned()
+}
+
+pub fn get_interface(interface: &str) -> Option<NetworkInterface> {
+    for network_interface in interfaces() {
+        if &network_interface.name == interface {
+            return Some(network_interface);
+        }
+    }
+    
+    None
 }
 
 pub fn get_default_ipv6_addr_interface() -> Ipv6Addr {

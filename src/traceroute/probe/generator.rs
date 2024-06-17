@@ -15,7 +15,8 @@ pub type GeneratedProbeTask = (ProbeId, Box<dyn ProbeTask>);
 pub trait ProbeTaskGenerator {
     fn generate_probe_task(
         &mut self,
-        ip_addr: IpAddr,
+        source_address: IpAddr,
+        destination_address: IpAddr,
         icmp_probe_response_sniffer: &IcmpProbeResponseSniffer
     ) -> io::Result<GeneratedProbeTask>;
 }
@@ -35,11 +36,12 @@ impl UdpProbeTaskGenerator {
 impl ProbeTaskGenerator for UdpProbeTaskGenerator {
     fn generate_probe_task(
         &mut self,
-        ip_addr: IpAddr,
+        source_address: IpAddr,
+        destination_address: IpAddr,
         icmp_probe_response_sniffer: &IcmpProbeResponseSniffer
     ) -> io::Result<GeneratedProbeTask> {
         let (tx_probe_response_channel, rx_probe_response_channel) = oneshot::channel();
-        let task = UdpProbeTask::new(ip_addr.clone(), self.destination_port, rx_probe_response_channel)?;
+        let task = UdpProbeTask::new(source_address, destination_address, self.destination_port, rx_probe_response_channel)?;
         icmp_probe_response_sniffer.register_oneshot(task.get_probe_id(), tx_probe_response_channel);
         let generated_probe_task = (self.destination_port.to_string(), Box::new(task) as Box<dyn ProbeTask>);
         self.destination_port += 1;
@@ -73,11 +75,12 @@ impl TcpProbeTaskGenerator {
 impl ProbeTaskGenerator for TcpProbeTaskGenerator {
     fn generate_probe_task(
         &mut self,
-        ip_addr: IpAddr,
+        source_address: IpAddr,
+        destination_address: IpAddr,
         icmp_probe_response_sniffer: &IcmpProbeResponseSniffer
     ) -> io::Result<GeneratedProbeTask> {
         let (tx_probe_response_channel, rx_probe_response_channel) = oneshot::channel();
-        let task = TcpProbeTask::new(self.ip_id, ip_addr.clone(), self.destination_port, rx_probe_response_channel)?;
+        let task = TcpProbeTask::new(self.ip_id, source_address, destination_address, self.destination_port, rx_probe_response_channel)?;
         icmp_probe_response_sniffer.register_oneshot(task.get_probe_id(), tx_probe_response_channel);
         let generated_probe_task = (self.ip_id.to_string(), Box::new(task) as Box<dyn ProbeTask>);
         self.ip_id += 1;
@@ -126,12 +129,13 @@ impl IcmpProbeTaskGenerator {
 impl ProbeTaskGenerator for IcmpProbeTaskGenerator {
     fn generate_probe_task(
         &mut self,
-        ip_addr: IpAddr,
+        source_address: IpAddr,
+        destination_address: IpAddr,
         icmp_probe_response_sniffer: &IcmpProbeResponseSniffer
     ) -> io::Result<GeneratedProbeTask> {
         let (tx_probe_response_channel, rx_probe_response_channel) = oneshot::channel();
         let task = IcmpProbeTask::new(
-            self.icmp_id, self.icmp_sqn, ip_addr.clone(), 
+            self.icmp_id, self.icmp_sqn, source_address, destination_address,
             rx_probe_response_channel, 
             self.tx_to_shared_socket.clone(),
         );

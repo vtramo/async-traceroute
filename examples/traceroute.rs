@@ -14,13 +14,14 @@ async fn main() -> Result<(), String> {
 
     println!("{:?}", ip_addr);
     let traceroute = TracerouteBuilder::udp()
-        .target_ip_address(ip_addr)
+        .destination_address(ip_addr)
         .max_ttl(15)
         .queries_per_hop(3)
         .max_wait_probe(Duration::from_secs(3))
         .simultaneous_queries(16)
         .active_dns_lookup(true)
         .initial_destination_port(33434)
+        .network_interface("eth0")
         .build();
 
     let traceroute_stream = match traceroute {

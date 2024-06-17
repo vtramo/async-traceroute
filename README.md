@@ -16,6 +16,8 @@ Several traceroute probe methods exist. This diagram shows how the UDP-based tra
 ![traceroute.svg](traceroute.svg)
 ## Usage
 ```
+Async Traceroute library/command-line tool
+
 Usage: traceroute [OPTIONS] <HOST>
 
 Arguments:
@@ -28,6 +30,7 @@ Options:
   -N, --sim-queries <SIM_QUERIES>    Set the number of probes to be tried simultaneously [default: 16]
   -P, --probe-method <PROBE_METHOD>  [default: udp] [possible values: udp, tcp, icmp]
   -n                                 Do not resolve IP addresses to their domain names
+  -i, --interface <INTERFACE>        Specify a network interface to operate with
   -h, --help                         Print help
   -V, --version                      Print version
 ```
@@ -48,13 +51,14 @@ async fn main() -> Result<(), String> {
     };
     
     let traceroute = TracerouteBuilder::udp()
-        .target_ip_address(ip_addr)
+        .destination_address(ip_addr)
         .max_ttl(15)
         .queries_per_hop(3)
         .max_wait_probe(Duration::from_secs(3))
         .simultaneous_queries(16)
         .active_dns_lookup(true)
         .initial_destination_port(33434)
+        .network_interface("eth0")
         .build();
     
     let traceroute_stream = match traceroute {
@@ -94,3 +98,8 @@ Async Traceroute library/command-line tool
 Usage: traceroute [OPTIONS] <HOST>
 ...
 ```
+## Notes:
+- This library requires administrator privileges to create raw sockets
+- Tested only on Linux
+## Todo:
+- Add support for Windows

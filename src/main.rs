@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use clap::Parser;
 
-use async_traceroute::{dns_lookup_first_ipv4_addr, ProbeMethod, TracerouteBuilder};
+use async_traceroute::{default_interface, dns_lookup_first_ipv4_addr, get_interface, ProbeMethod, TracerouteBuilder};
 use async_traceroute::TracerouteTerminal;
 
 #[derive(Parser, Debug)]
@@ -37,6 +37,10 @@ struct TracerouteOptions {
     /// Do not resolve IP addresses to their domain names
     #[arg(short = 'n', default_value_t = true)]
     dns_lookup: bool,
+    
+    /// Specify a network interface to operate with
+    #[arg(short = 'i', long)]
+    interface: Option<String>,
 }
 
 #[tokio::main]
@@ -51,34 +55,48 @@ async fn main() -> Result<(), String> {
             Some(ip_addr) => ip_addr,
         }
     };
+    
+    let interface = match traceroute_options.interface {
+        None => match default_interface() {
+            None => return Err(String::from("Network interface not found!")),
+            Some(network_interface) => network_interface.name
+        },
+        Some(interface_name) => match get_interface(&interface_name) {
+            None => return Err(format!("Network interface {} not found!", interface_name)),
+            Some(network_interface) => network_interface.name,
+        }
+    };
 
     let traceroute = match traceroute_options.probe_method {
         ProbeMethod::TCP => TracerouteBuilder::tcp()
-            .target_ip_address(ip_addr)
+            .destination_address(ip_addr)
             .max_ttl(traceroute_options.max_hops)
             .queries_per_hop(traceroute_options.queries)
             .simultaneous_queries(traceroute_options.sim_queries)
             .max_wait_probe(traceroute_options.wait)
             .active_dns_lookup(traceroute_options.dns_lookup)
             .initial_destination_port(80)
+            .network_interface(&interface)
             .build(),
         ProbeMethod::UDP => TracerouteBuilder::udp()
-            .target_ip_address(ip_addr)
+            .destination_address(ip_addr)
             .max_ttl(traceroute_options.max_hops)
             .queries_per_hop(traceroute_options.queries)
             .simultaneous_queries(traceroute_options.sim_queries)
             .max_wait_probe(traceroute_options.wait)
             .active_dns_lookup(traceroute_options.dns_lookup)
             .initial_destination_port(33434)
+            .network_interface(&interface)
             .build(),
         ProbeMethod::ICMP => TracerouteBuilder::icmp()
-            .target_ip_address(ip_addr)
+            .destination_address(ip_addr)
             .max_ttl(traceroute_options.max_hops)
             .queries_per_hop(traceroute_options.queries)
             .simultaneous_queries(traceroute_options.sim_queries)
             .max_wait_probe(traceroute_options.wait)
             .active_dns_lookup(traceroute_options.dns_lookup)
             .initial_sequence_number(1)
+            .network_interface(&interface)
             .build(),
     };
 
