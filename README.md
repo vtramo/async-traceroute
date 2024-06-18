@@ -29,6 +29,10 @@ Options:
   -w, --wait <WAIT>                  Wait for a probe no more than <WAIT> [default: 3s]
   -N, --sim-queries <SIM_QUERIES>    Set the number of probes to be tried simultaneously [default: 16]
   -P, --probe-method <PROBE_METHOD>  [default: udp] [possible values: udp, tcp, icmp]
+  -p, --port <PORT>                  This value changes semantics based on the probe method selected. It is either 
+                                     initial udp port value for "udp" probe method (incremented by each probe,
+                                     default is 33434), or initial seq for "icmp" probe method (incremented as well, 
+                                     default from 1), or destination port for "tcp" probe method (default is 80)
   -n                                 Do not resolve IP addresses to their domain names
   -i, --interface <INTERFACE>        Specify a network interface to operate with
   -h, --help                         Print help
@@ -83,7 +87,7 @@ cargo add async-traceroute
 ```
 Or add the following line to your Cargo.toml:
 ```
-async-traceroute = "0.1.0"
+async-traceroute = "0.1.2"
 ```
 ## Docker
 Build image:

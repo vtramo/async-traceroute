@@ -34,6 +34,14 @@ struct TracerouteOptions {
     #[arg(short = 'P', long, value_enum, default_value = "udp")]
     probe_method: ProbeMethod,
 
+    /// This value changes semantics based on the probe method selected.
+    /// It is either initial udp port value for "udp" probe method
+    /// (incremented by each probe, default is 33434), or
+    /// initial seq for "icmp" probe method (incremented as well,
+    /// default from 1), or destination port for "tcp" probe method (default is 80)
+    #[arg(short = 'p', long)]
+    port: Option<u16>,
+
     /// Do not resolve IP addresses to their domain names
     #[arg(short = 'n', default_value_t = true)]
     dns_lookup: bool,
@@ -67,6 +75,7 @@ async fn main() -> Result<(), String> {
         }
     };
 
+    let port = traceroute_options.port;
     let traceroute = match traceroute_options.probe_method {
         ProbeMethod::TCP => TracerouteBuilder::tcp()
             .destination_address(ip_addr)
@@ -75,7 +84,7 @@ async fn main() -> Result<(), String> {
             .simultaneous_queries(traceroute_options.sim_queries)
             .max_wait_probe(traceroute_options.wait)
             .active_dns_lookup(traceroute_options.dns_lookup)
-            .initial_destination_port(80)
+            .initial_destination_port(if port.is_none() { 80 } else { port.unwrap() })
             .network_interface(&interface)
             .build(),
         ProbeMethod::UDP => TracerouteBuilder::udp()
@@ -85,7 +94,7 @@ async fn main() -> Result<(), String> {
             .simultaneous_queries(traceroute_options.sim_queries)
             .max_wait_probe(traceroute_options.wait)
             .active_dns_lookup(traceroute_options.dns_lookup)
-            .initial_destination_port(33434)
+            .initial_destination_port(if port.is_none() { 33434 } else { port.unwrap() })
             .network_interface(&interface)
             .build(),
         ProbeMethod::ICMP => TracerouteBuilder::icmp()
@@ -95,7 +104,7 @@ async fn main() -> Result<(), String> {
             .simultaneous_queries(traceroute_options.sim_queries)
             .max_wait_probe(traceroute_options.wait)
             .active_dns_lookup(traceroute_options.dns_lookup)
-            .initial_sequence_number(1)
+            .initial_sequence_number(if port.is_none() { 1 } else { port.unwrap() })
             .network_interface(&interface)
             .build(),
     };

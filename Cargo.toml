@@ -1,6 +1,6 @@
 [package]
 name = "async-traceroute"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 authors = ["vtramo <vv.tramo@gmail.com>"]
 description = "Async Traceroute library/command-line tool"

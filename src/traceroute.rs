@@ -82,7 +82,7 @@ impl Traceroute {
         let mut query_count_by_ttl = HashMap::<u8, u16>::new();
         let mut ttl_target_address = u8::MAX;
         let mut target_address_found = false;
-        println!("{:?}", self.destination_address);
+
         stream! {
             loop {
                 if *self.current_ttl.borrow() > self.max_ttl {

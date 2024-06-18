@@ -64,10 +64,10 @@ impl TcpProbeTaskGenerator {
         }
     }
 
-    pub fn new() -> Self {
+    pub fn new(destination_port: u16) -> Self {
         Self {
             ip_id: crate::traceroute::utils::generate_u16(),
-            destination_port: TcpProbeTaskGenerator::DEFAULT_DESTINATION_PORT
+            destination_port,
         }
     }
 }
@@ -90,20 +90,20 @@ impl ProbeTaskGenerator for TcpProbeTaskGenerator {
 
 pub struct IcmpProbeTaskGenerator {
     icmp_id: u16,
-    icmp_sqn: u16,
+    icmp_isn: u16,
     tx_to_shared_socket: Sender<(Vec<u8>, SocketAddr)>, 
 }
 
 impl IcmpProbeTaskGenerator {
     const SHARED_SOCKET_BUFFER_SIZE: usize = 255;
     
-    pub fn new() -> io::Result<Self> {
+    pub fn new(isn: u16) -> io::Result<Self> {
         let (tx_to_shared_socket, rx_to_shared_socket) = mpsc::channel(Self::SHARED_SOCKET_BUFFER_SIZE);
         Self::spawn_shared_socket(rx_to_shared_socket)?;
         
         Ok(Self {
             icmp_id: crate::traceroute::utils::generate_u16(),
-            icmp_sqn: 1,
+            icmp_isn: isn,
             tx_to_shared_socket
         })
     }
@@ -135,14 +135,14 @@ impl ProbeTaskGenerator for IcmpProbeTaskGenerator {
     ) -> io::Result<GeneratedProbeTask> {
         let (tx_probe_response_channel, rx_probe_response_channel) = oneshot::channel();
         let task = IcmpProbeTask::new(
-            self.icmp_id, self.icmp_sqn, source_address, destination_address,
-            rx_probe_response_channel, 
+            self.icmp_id, self.icmp_isn, source_address, destination_address,
+            rx_probe_response_channel,
             self.tx_to_shared_socket.clone(),
         );
         icmp_probe_response_sniffer.register_oneshot(task.get_probe_id(), tx_probe_response_channel);
-        let probe_id = format!("{}{}", self.icmp_id, self.icmp_sqn);
+        let probe_id = format!("{}{}", self.icmp_id, self.icmp_isn);
         let generated_probe_task = (probe_id, Box::new(task) as Box<dyn ProbeTask>);
-        self.icmp_sqn += 1;
+        self.icmp_isn += 1;
         Ok(generated_probe_task)
     }
 }

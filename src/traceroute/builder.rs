@@ -258,7 +258,7 @@ impl TracerouteTcpBuilder {
     pub fn build(self) -> Result<Traceroute, String> {
         let (parser, generator) = (
             ProbeReplyParser::TCP(TcpProbeResponseParser),
-            Box::new(TcpProbeTaskGenerator::new())
+            Box::new(TcpProbeTaskGenerator::new(self.destination_port))
         );
 
         self.traceroute_base_builder.build(generator, parser)
@@ -323,7 +323,7 @@ impl TracerouteIcmpBuilder {
     pub fn build(self) -> Result<Traceroute, String> {
         let (parser, generator) = (
             ProbeReplyParser::ICMP(IcmpProbeResponseParser),
-            Box::new(match IcmpProbeTaskGenerator::new() {
+            Box::new(match IcmpProbeTaskGenerator::new(self.isn) {
                 Ok(generator) => generator,
                 Err(error) => return Err(error.to_string()),
             })
