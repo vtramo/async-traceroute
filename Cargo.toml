@@ -12,7 +12,7 @@ license = "MIT"
 
 
 [dependencies]
-clap = { version = "4.5.4", features = ["derive"] }
+clap = { version = "4.5.4", features = ["derive", "wrap_help"] }
 pnet="0.35.0"
 rand = "0.8.5"
 socket2 = { version = "0.5.7", features = ["all"] }
