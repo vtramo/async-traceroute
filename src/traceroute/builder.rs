@@ -102,16 +102,18 @@ impl TracerouteBaseBuilder {
         if self.destination_address.is_none() {
             return Err(String::from("Destination address required!"));
         }
-        
+
+        let no_network_interface_found = String::from("No network interface found!");
         let source_address = match self.interface {
             None => match default_interface() {
-                None => return Err(String::from("No network interface found!")),
+                None => return Err(no_network_interface_found),
                 Some(network_interface) => match network_interface.ips.first() {
-                    None => return Err(String::from("No network interface found!")),
-                    Some(ip_network) => ip_network.ip()                }
+                    None => return Err(no_network_interface_found),
+                    Some(ip_network) => ip_network.ip()
+                }
             },
             Some(network_interface) => match network_interface.ips.first() {
-                None => return Err(String::from("No network interface found!")),
+                None => return Err(no_network_interface_found),
                 Some(ip_network) => ip_network.ip()
             }
         };
