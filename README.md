@@ -80,6 +80,13 @@ async fn main() -> Result<(), String> {
 }
 
 ```
+## Features (probe methods)
+- [x] IPv4 UDP
+- [x] IPv4 TCP
+- [x] IPv4 ICMPv4
+- [ ] IPv6 UDP 
+- [ ] IPv6 TCP 
+- [ ] IPv6 ICMPv6 
 ## Install
 Run the following Cargo command in your project directory:
 ```
@@ -102,8 +109,6 @@ Async Traceroute library/command-line tool
 Usage: traceroute [OPTIONS] <HOST>
 ...
 ```
-## Notes:
+## Important notes:
 - This library requires administrator privileges to create raw sockets
-- Tested only on Linux
-## Todo:
-- Add support for Windows
+- No Windows support
