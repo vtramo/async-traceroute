@@ -6,14 +6,12 @@ use futures::{pin_mut, StreamExt};
 use crate::traceroute::probe::ProbeResult;
 use crate::traceroute::Traceroute;
 
-type Ttl = u8;
-
 pub struct TracerouteTerminal {
     traceroute: Traceroute,
     current_ttl: u8,
     nqueries: u16,
     max_ttl: u8,
-    hop_by_ttl: HashMap<Ttl, PrintableHop>,
+    hop_by_ttl: HashMap<u8, PrintableHop>,
 }
 
 impl TracerouteTerminal {
