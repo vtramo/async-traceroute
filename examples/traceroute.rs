@@ -11,7 +11,6 @@ async fn main() -> Result<(), String> {
         Some(ip_addr) => ip_addr,
     };
 
-    println!("{:?}", ip_addr);
     let traceroute = TracerouteBuilder::udp()
         .destination_address(ip_addr)
         .max_ttl(15)

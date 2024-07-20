@@ -84,7 +84,7 @@ async fn main() -> Result<(), String> {
             .simultaneous_queries(traceroute_options.sim_queries)
             .max_wait_probe(traceroute_options.wait)
             .active_dns_lookup(traceroute_options.dns_lookup)
-            .initial_destination_port(if port.is_none() { 80 } else { port.unwrap() })
+            .initial_destination_port(port.unwrap_or(80))
             .network_interface(&interface)
             .build(),
         ProbeMethod::UDP => TracerouteBuilder::udp()
@@ -94,7 +94,7 @@ async fn main() -> Result<(), String> {
             .simultaneous_queries(traceroute_options.sim_queries)
             .max_wait_probe(traceroute_options.wait)
             .active_dns_lookup(traceroute_options.dns_lookup)
-            .initial_destination_port(if port.is_none() { 33434 } else { port.unwrap() })
+            .initial_destination_port(port.unwrap_or(33434))
             .network_interface(&interface)
             .build(),
         ProbeMethod::ICMP => TracerouteBuilder::icmp()
@@ -104,7 +104,7 @@ async fn main() -> Result<(), String> {
             .simultaneous_queries(traceroute_options.sim_queries)
             .max_wait_probe(traceroute_options.wait)
             .active_dns_lookup(traceroute_options.dns_lookup)
-            .initial_sequence_number(if port.is_none() { 1 } else { port.unwrap() })
+            .initial_sequence_number(port.unwrap_or(1))
             .network_interface(&interface)
             .build(),
     };
