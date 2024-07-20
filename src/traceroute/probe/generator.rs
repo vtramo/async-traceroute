@@ -5,9 +5,7 @@ use socket2::{Domain, Protocol, Type};
 use tokio::sync::{mpsc, oneshot};
 use tokio::sync::mpsc::{Receiver, Sender};
 
-use crate::traceroute::async_socket::SharedAsyncTokioSocket;
-use crate::traceroute::probe::ProbeId;
-use crate::traceroute::probe::sniffer::{IcmpProbeResponseSniffer, Sniffer};
+use crate::traceroute::async_socket::SharedWriteOnlyAsyncSocket;
 use crate::traceroute::probe::task::{IcmpProbeTask, ProbeTask, TcpProbeTask, UdpProbeTask};
 
 pub type GeneratedProbeTask = (ProbeId, Box<dyn ProbeTask>);
@@ -98,8 +96,8 @@ impl IcmpProbeTaskGenerator {
     const SHARED_SOCKET_BUFFER_SIZE: usize = 255;
     
     pub fn new(isn: u16) -> io::Result<Self> {
-        let (tx_to_shared_socket, rx_to_shared_socket) = mpsc::channel(Self::SHARED_SOCKET_BUFFER_SIZE);
-        Self::spawn_shared_socket(rx_to_shared_socket)?;
+        let (tx_to_shared_socket, rx_to_shared_write_only_socket) = mpsc::channel(Self::SHARED_SOCKET_BUFFER_SIZE);
+        Self::spawn_shared_write_only_socket(rx_to_shared_write_only_socket)?;
         
         Ok(Self {
             icmp_id: crate::traceroute::utils::generate_u16(),
@@ -108,8 +106,8 @@ impl IcmpProbeTaskGenerator {
         })
     }
     
-    fn spawn_shared_socket(rx_to_shared_socket: Receiver<(Vec<u8>, SocketAddr)>) -> io::Result<()> {
-        let mut shared_socket = SharedAsyncTokioSocket::new(
+    fn spawn_shared_write_only_socket(rx_to_shared_socket: Receiver<(Vec<u8>, SocketAddr)>) -> io::Result<()> {
+        let mut shared_socket = SharedWriteOnlyAsyncSocket::new(
             Domain::IPV4,
             Type::RAW,
             Some(Protocol::ICMPV4),
