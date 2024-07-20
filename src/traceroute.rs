@@ -12,9 +12,9 @@ use futures::Stream;
 use tokio::select;
 use tokio::task::JoinSet;
 
-use crate::traceroute::probe::{ProbeError, ProbeResult};
+use crate::traceroute::probe::{ProbeError, ProbeResponse, ProbeResult};
 use crate::traceroute::probe::generator::ProbeTaskGenerator;
-use crate::traceroute::probe::sniffer::{IcmpProbeResponseSniffer, Sniffer};
+use crate::traceroute::probe::sniffer::ObservableIcmpSniffer;
 use crate::traceroute::utils::dns;
 
 pub mod utils;
@@ -34,7 +34,7 @@ pub struct Traceroute {
     current_ttl: Box<RefCell<u8>>,
     current_query: Box<RefCell<u16>>,
     probe_task_generator: Box<RefCell<Box<dyn ProbeTaskGenerator>>>,
-    icmp_probe_response_sniffer: Arc<IcmpProbeResponseSniffer>,
+    observable_icmp_sniffer: Arc<Box<dyn ObservableIcmpSniffer<Response = ProbeResponse> + Send + Sync>>,
 }
 
 impl Traceroute {
@@ -47,7 +47,7 @@ impl Traceroute {
         max_wait_probe: Duration,
         is_active_dns_lookup: bool,
         probe_task_generator: Box<dyn ProbeTaskGenerator>,
-        icmp_probe_response_sniffer: IcmpProbeResponseSniffer,
+        observable_icmp_sniffer: Box<dyn ObservableIcmpSniffer<Response=ProbeResponse> + 'static + Send + Sync>
     ) -> Self {
         Self {
             source_address,
@@ -60,7 +60,7 @@ impl Traceroute {
             current_ttl: Box::new(RefCell::new(1)),
             current_query: Box::new(RefCell::new(1)),
             probe_task_generator: Box::new(RefCell::new(probe_task_generator)),
-            icmp_probe_response_sniffer: Arc::new(icmp_probe_response_sniffer),
+            observable_icmp_sniffer: Arc::new(observable_icmp_sniffer),
         }
     }
 
@@ -68,14 +68,14 @@ impl Traceroute {
         let mut probe_tasks = JoinSet::new();
 
         for _ in 0..self.sim_queries {
-            let probe_task = self.generate_probe_task(&self.icmp_probe_response_sniffer);
+            let probe_task = self.generate_probe_task();
             self.increment_ttl_query_counter();
             probe_tasks.spawn(probe_task);
         }
 
-        let icmp_probe_response_sniffer = Arc::clone(&self.icmp_probe_response_sniffer);
+        let observable_icmp_sniffer = Arc::clone(&self.observable_icmp_sniffer);
         tokio::spawn(async move {
-            icmp_probe_response_sniffer.sniff().await
+            observable_icmp_sniffer.sniff().await
         });
 
         let mut stop_send_probes = false;
@@ -125,8 +125,7 @@ impl Traceroute {
                         }
 
                         if !stop_send_probes {
-                            let probe_task =
-                                self.generate_probe_task(&self.icmp_probe_response_sniffer);
+                            let probe_task = self.generate_probe_task();
 
                             self.increment_ttl_query_counter();
                             probe_tasks.spawn(probe_task);
@@ -138,15 +137,12 @@ impl Traceroute {
         }
     }
 
-    fn generate_probe_task(
-        &self,
-        icmp_probe_response_sniffer: &IcmpProbeResponseSniffer,
-    ) -> Pin<Box<impl Future<Output=Result<ProbeResult, ProbeError>>>> {
+    fn generate_probe_task(&self) -> Pin<Box<impl Future<Output=Result<ProbeResult, ProbeError>>>> {
         let mut probe_task_generator = self.probe_task_generator.borrow_mut();
         match probe_task_generator.generate_probe_task(
             self.source_address,
             self.destination_address,
-            &icmp_probe_response_sniffer,
+            &**self.observable_icmp_sniffer,
         ) {
             Ok((_, mut probe_task)) => {
                 let current_ttl = *self.current_ttl.borrow();
@@ -156,7 +152,7 @@ impl Traceroute {
                 });
                 probe_task_future
             }
-            Err(_) => todo!()
+            Err(io_error) => panic!("Failed to send a traceroute probe ({:?})", io_error.kind())
         }
     }
 

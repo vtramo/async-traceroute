@@ -6,7 +6,7 @@ use pnet::datalink::NetworkInterface;
 use crate::Traceroute;
 use crate::traceroute::probe::generator::{IcmpProbeTaskGenerator, ProbeTaskGenerator, TcpProbeTaskGenerator, UdpProbeTaskGenerator};
 use crate::traceroute::probe::parser::{IcmpProbeResponseParser, ProbeReplyParser, TcpProbeResponseParser, UdpProbeResponseParser};
-use crate::traceroute::probe::sniffer::IcmpProbeResponseSniffer;
+use crate::traceroute::probe::sniffer::ObservableIcmpProbeResponseSniffer;
 use crate::traceroute::utils::packet_utils::{default_interface, get_interface};
 
 pub struct TracerouteBuilder;
@@ -118,7 +118,7 @@ impl TracerouteBaseBuilder {
             }
         };
 
-        let icmp_sniffer = match IcmpProbeResponseSniffer::new(probe_reply_parser) {
+        let icmp_sniffer = match ObservableIcmpProbeResponseSniffer::new(probe_reply_parser) {
             Ok(icmp_sniffer) => icmp_sniffer,
             Err(error) => return Err(String::from(&format!("{}", error.to_string())))
         };
@@ -132,7 +132,7 @@ impl TracerouteBaseBuilder {
             self.max_wait_probe,
             self.is_active_dns_lookup,
             probe_task_generator,
-            icmp_sniffer,
+            Box::new(icmp_sniffer),
         ))
     }
 }

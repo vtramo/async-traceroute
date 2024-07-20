@@ -6,6 +6,8 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use crate::traceroute::async_socket::SharedWriteOnlyAsyncSocket;
+use crate::traceroute::probe::{ProbeId, ProbeResponse};
+use crate::traceroute::probe::sniffer::{ObservableIcmpSniffer};
 use crate::traceroute::probe::task::{IcmpProbeTask, ProbeTask, TcpProbeTask, UdpProbeTask};
 
 pub type GeneratedProbeTask = (ProbeId, Box<dyn ProbeTask>);
@@ -15,7 +17,7 @@ pub trait ProbeTaskGenerator {
         &mut self,
         source_address: IpAddr,
         destination_address: IpAddr,
-        icmp_probe_response_sniffer: &IcmpProbeResponseSniffer
+        observable_icmp_sniffer: &dyn ObservableIcmpSniffer<Response = ProbeResponse>
     ) -> io::Result<GeneratedProbeTask>;
 }
 
@@ -36,11 +38,11 @@ impl ProbeTaskGenerator for UdpProbeTaskGenerator {
         &mut self,
         source_address: IpAddr,
         destination_address: IpAddr,
-        icmp_probe_response_sniffer: &IcmpProbeResponseSniffer
+        observable_icmp_sniffer: &dyn ObservableIcmpSniffer<Response = ProbeResponse>
     ) -> io::Result<GeneratedProbeTask> {
         let (tx_probe_response_channel, rx_probe_response_channel) = oneshot::channel();
         let task = UdpProbeTask::new(source_address, destination_address, self.destination_port, rx_probe_response_channel)?;
-        icmp_probe_response_sniffer.register_oneshot(task.get_probe_id(), tx_probe_response_channel);
+        observable_icmp_sniffer.register_oneshot(task.get_probe_id(), tx_probe_response_channel);
         let generated_probe_task = (self.destination_port.to_string(), Box::new(task) as Box<dyn ProbeTask>);
         self.destination_port += 1;
         Ok(generated_probe_task)
@@ -75,11 +77,11 @@ impl ProbeTaskGenerator for TcpProbeTaskGenerator {
         &mut self,
         source_address: IpAddr,
         destination_address: IpAddr,
-        icmp_probe_response_sniffer: &IcmpProbeResponseSniffer
+        observable_icmp_sniffer: &dyn ObservableIcmpSniffer<Response = ProbeResponse>
     ) -> io::Result<GeneratedProbeTask> {
         let (tx_probe_response_channel, rx_probe_response_channel) = oneshot::channel();
         let task = TcpProbeTask::new(self.ip_id, source_address, destination_address, self.destination_port, rx_probe_response_channel)?;
-        icmp_probe_response_sniffer.register_oneshot(task.get_probe_id(), tx_probe_response_channel);
+        observable_icmp_sniffer.register_oneshot(task.get_probe_id(), tx_probe_response_channel);
         let generated_probe_task = (self.ip_id.to_string(), Box::new(task) as Box<dyn ProbeTask>);
         self.ip_id += 1;
         Ok(generated_probe_task)
@@ -129,7 +131,7 @@ impl ProbeTaskGenerator for IcmpProbeTaskGenerator {
         &mut self,
         source_address: IpAddr,
         destination_address: IpAddr,
-        icmp_probe_response_sniffer: &IcmpProbeResponseSniffer
+        observable_icmp_sniffer: &dyn ObservableIcmpSniffer<Response = ProbeResponse>
     ) -> io::Result<GeneratedProbeTask> {
         let (tx_probe_response_channel, rx_probe_response_channel) = oneshot::channel();
         let task = IcmpProbeTask::new(
@@ -137,7 +139,7 @@ impl ProbeTaskGenerator for IcmpProbeTaskGenerator {
             rx_probe_response_channel,
             self.tx_to_shared_socket.clone(),
         );
-        icmp_probe_response_sniffer.register_oneshot(task.get_probe_id(), tx_probe_response_channel);
+        observable_icmp_sniffer.register_oneshot(task.get_probe_id(), tx_probe_response_channel);
         let probe_id = format!("{}{}", self.icmp_id, self.icmp_isn);
         let generated_probe_task = (probe_id, Box::new(task) as Box<dyn ProbeTask>);
         self.icmp_isn += 1;

@@ -14,7 +14,7 @@ use crate::traceroute::probe::parser::ProbeReplyParser;
 use crate::traceroute::utils::packet_utils;
 
 #[async_trait]
-pub trait Sniffer {
+pub trait ObservableIcmpSniffer: Send {
     type Response;
 
     async fn sniff(&self);
@@ -23,7 +23,7 @@ pub trait Sniffer {
     fn stop(&self) -> io::Result<()>;
 }
 
-pub struct IcmpProbeResponseSniffer {
+pub struct ObservableIcmpProbeResponseSniffer {
     socket: AsyncSocket,
     oneshot_channels_by_probe_id: Mutex<HashMap<String, Sender<ProbeResponse>>>,
     probe_reply_parser: ProbeReplyParser,
@@ -31,7 +31,7 @@ pub struct IcmpProbeResponseSniffer {
 }
 
 #[async_trait]
-impl Sniffer for IcmpProbeResponseSniffer {
+impl ObservableIcmpSniffer for ObservableIcmpProbeResponseSniffer {
     type Response = ProbeResponse;
 
     async fn sniff(&self) {
@@ -101,11 +101,11 @@ impl Sniffer for IcmpProbeResponseSniffer {
     }
 }
 
-impl IcmpProbeResponseSniffer {
+impl ObservableIcmpProbeResponseSniffer {
     const BUFFER_SIZE: usize = 1024;
 
     pub fn new(probe_reply_parser: ProbeReplyParser) -> io::Result<Self> {
-        Ok(IcmpProbeResponseSniffer {
+        Ok(ObservableIcmpProbeResponseSniffer {
             socket: AsyncSocket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4))?,
             oneshot_channels_by_probe_id: Mutex::new(HashMap::with_capacity(120)),
             probe_reply_parser,
