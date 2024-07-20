@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_stream::stream;
-use futures_core::stream::Stream;
+use futures::Stream;
 use tokio::select;
 use tokio::task::JoinSet;
 

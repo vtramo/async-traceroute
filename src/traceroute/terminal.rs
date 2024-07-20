@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 
-use futures::pin_mut;
-use futures_util::StreamExt;
+use futures::{pin_mut, StreamExt};
 
 use crate::traceroute::probe::ProbeResult;
 use crate::traceroute::Traceroute;

@@ -1,7 +1,6 @@
 use std::time::Duration;
 
-use futures::pin_mut;
-use futures_util::StreamExt;
+use futures::{pin_mut, StreamExt};
 
 use async_traceroute::{dns_lookup_first_ipv4_addr, TracerouteBuilder};
 
