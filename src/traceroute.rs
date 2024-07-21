@@ -31,9 +31,9 @@ pub struct Traceroute {
     sim_queries: u16,
     max_wait_probe: Duration,
     is_active_dns_lookup: bool,
-    current_ttl: Box<RefCell<u8>>,
-    current_query: Box<RefCell<u16>>,
-    probe_task_generator: Box<RefCell<Box<dyn ProbeTaskGenerator>>>,
+    current_ttl: RefCell<u8>,
+    current_query: RefCell<u16>,
+    probe_task_generator: RefCell<Box<dyn ProbeTaskGenerator>>,
     observable_icmp_sniffer: Arc<Box<dyn ObservableIcmpSniffer<Response = ProbeResponse> + Send + Sync>>,
 }
 
@@ -57,9 +57,9 @@ impl Traceroute {
             sim_queries: min(sim_queries, (max_ttl as u16) * nqueries),
             max_wait_probe,
             is_active_dns_lookup,
-            current_ttl: Box::new(RefCell::new(1)),
-            current_query: Box::new(RefCell::new(1)),
-            probe_task_generator: Box::new(RefCell::new(probe_task_generator)),
+            current_ttl: RefCell::new(1),
+            current_query: RefCell::new(1),
+            probe_task_generator: RefCell::new(probe_task_generator),
             observable_icmp_sniffer: Arc::new(observable_icmp_sniffer),
         }
     }
