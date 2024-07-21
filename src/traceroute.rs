@@ -47,7 +47,7 @@ impl Traceroute {
         max_wait_probe: Duration,
         is_active_dns_lookup: bool,
         probe_task_generator: Box<dyn ProbeTaskGenerator>,
-        observable_icmp_sniffer: Box<dyn ObservableIcmpSniffer<Response=ProbeResponse> + 'static + Send + Sync>
+        observable_icmp_sniffer: Box<dyn ObservableIcmpSniffer<Response=ProbeResponse> + Send + Sync>
     ) -> Self {
         Self {
             source_address,

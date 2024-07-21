@@ -6,27 +6,8 @@ use crate::traceroute::probe::ProbeResponse;
 use crate::traceroute::utils::packet_utils;
 use crate::traceroute::utils::packet_utils::is_icmp_ttl_expired;
 
-pub trait ProbeResponseParser: Send {
+pub trait ProbeResponseParser: Send + Sync {
     fn parse(&self, icmp_packet: &Icmp, ipv4_datagram: &Ipv4) -> Option<ProbeResponse>;
-}
-
-pub enum ProbeReplyParser {
-    UDP(UdpProbeResponseParser),
-    TCP(TcpProbeResponseParser),
-    ICMP(IcmpProbeResponseParser),
-}
-
-impl ProbeResponseParser for ProbeReplyParser {
-    fn parse(&self, icmp_packet: &Icmp, ipv4_datagram: &Ipv4) -> Option<ProbeResponse> {
-        match self {
-            ProbeReplyParser::UDP(udp_probe_response_parser) => 
-                udp_probe_response_parser.parse(icmp_packet, ipv4_datagram),
-            ProbeReplyParser::TCP(tcp_probe_response_parser) => 
-                tcp_probe_response_parser.parse(icmp_packet, ipv4_datagram),
-            ProbeReplyParser::ICMP(icmp_probe_response_parser) => 
-                icmp_probe_response_parser.parse(icmp_packet, ipv4_datagram),
-        }
-    }
 }
 
 pub struct UdpProbeResponseParser;

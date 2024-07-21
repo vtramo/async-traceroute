@@ -5,7 +5,8 @@ use pnet::datalink::NetworkInterface;
 
 use crate::Traceroute;
 use crate::traceroute::probe::generator::{IcmpProbeTaskGenerator, ProbeTaskGenerator, TcpProbeTaskGenerator, UdpProbeTaskGenerator};
-use crate::traceroute::probe::parser::{IcmpProbeResponseParser, ProbeReplyParser, TcpProbeResponseParser, UdpProbeResponseParser};
+use crate::traceroute::probe::parser::{IcmpProbeResponseParser, TcpProbeResponseParser, UdpProbeResponseParser};
+use crate::traceroute::probe::ProbeResponseParser;
 use crate::traceroute::probe::sniffer::ObservableIcmpProbeResponseSniffer;
 use crate::traceroute::utils::packet_utils::{default_interface, get_interface};
 
@@ -93,7 +94,7 @@ impl TracerouteBaseBuilder {
     fn build(
         self,
         probe_task_generator: Box<dyn ProbeTaskGenerator>,
-        probe_reply_parser: ProbeReplyParser,
+        probe_response_parser: Box<dyn ProbeResponseParser>,
     ) -> Result<Traceroute, String> {
         if self.error.is_some() {
             return Err(self.error.unwrap())
@@ -118,7 +119,7 @@ impl TracerouteBaseBuilder {
             }
         };
 
-        let icmp_sniffer = match ObservableIcmpProbeResponseSniffer::new(probe_reply_parser) {
+        let icmp_sniffer = match ObservableIcmpProbeResponseSniffer::new(probe_response_parser) {
             Ok(icmp_sniffer) => icmp_sniffer,
             Err(error) => return Err(String::from(&format!("{}", error.to_string())))
         };
@@ -194,7 +195,7 @@ impl TracerouteUdpBuilder {
     
     pub fn build(self) -> Result<Traceroute, String> {
         let (parser, generator) = (
-            ProbeReplyParser::UDP(UdpProbeResponseParser), 
+            Box::new(UdpProbeResponseParser),
             Box::new(UdpProbeTaskGenerator::new(self.initial_destination_port))
         );
         
@@ -259,7 +260,7 @@ impl TracerouteTcpBuilder {
 
     pub fn build(self) -> Result<Traceroute, String> {
         let (parser, generator) = (
-            ProbeReplyParser::TCP(TcpProbeResponseParser),
+            Box::new(TcpProbeResponseParser),
             Box::new(TcpProbeTaskGenerator::new(self.destination_port))
         );
 
@@ -324,7 +325,7 @@ impl TracerouteIcmpBuilder {
 
     pub fn build(self) -> Result<Traceroute, String> {
         let (parser, generator) = (
-            ProbeReplyParser::ICMP(IcmpProbeResponseParser),
+            Box::new(IcmpProbeResponseParser),
             Box::new(match IcmpProbeTaskGenerator::new(self.isn) {
                 Ok(generator) => generator,
                 Err(error) => return Err(error.to_string()),

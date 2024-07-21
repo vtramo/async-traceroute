@@ -10,11 +10,10 @@ use tokio::sync::oneshot::Sender;
 
 use crate::traceroute::async_socket::AsyncSocket;
 use crate::traceroute::probe::{ProbeId, ProbeResponse, ProbeResponseParser};
-use crate::traceroute::probe::parser::ProbeReplyParser;
 use crate::traceroute::utils::packet_utils;
 
 #[async_trait]
-pub trait ObservableIcmpSniffer: Send {
+pub trait ObservableIcmpSniffer {
     type Response;
 
     async fn sniff(&self);
@@ -26,7 +25,7 @@ pub trait ObservableIcmpSniffer: Send {
 pub struct ObservableIcmpProbeResponseSniffer {
     socket: AsyncSocket,
     oneshot_channels_by_probe_id: Mutex<HashMap<String, Sender<ProbeResponse>>>,
-    probe_reply_parser: ProbeReplyParser,
+    probe_response_parser: Box<dyn ProbeResponseParser>,
     is_sniffing: Mutex<bool>,
 }
 
@@ -59,7 +58,7 @@ impl ObservableIcmpSniffer for ObservableIcmpProbeResponseSniffer {
             };
 
             if let Some(probe_response)
-                = self.probe_reply_parser.parse(&icmp_packet, &ipv4_datagram) {
+                = self.probe_response_parser.parse(&icmp_packet, &ipv4_datagram) {
 
                 match self.oneshot_channels_by_probe_id.lock() {
                     Ok(mut oneshot_channels_by_probe_id) => {
@@ -104,11 +103,11 @@ impl ObservableIcmpSniffer for ObservableIcmpProbeResponseSniffer {
 impl ObservableIcmpProbeResponseSniffer {
     const BUFFER_SIZE: usize = 1024;
 
-    pub fn new(probe_reply_parser: ProbeReplyParser) -> io::Result<Self> {
+    pub fn new(probe_response_parser: Box<dyn ProbeResponseParser>) -> io::Result<Self> {
         Ok(ObservableIcmpProbeResponseSniffer {
             socket: AsyncSocket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4))?,
             oneshot_channels_by_probe_id: Mutex::new(HashMap::with_capacity(120)),
-            probe_reply_parser,
+            probe_response_parser,
             is_sniffing: Mutex::new(false),
         })
     }
