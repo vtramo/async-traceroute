@@ -68,9 +68,7 @@ impl AsyncSocket {
     }
 }
 
-struct SocketWrapper {
-    socket: Socket,
-}
+struct SocketWrapper(Socket);
 
 impl SocketWrapper {
     fn new(domain: Domain, ty: Type, protocol: Option<Protocol>) -> io::Result<Self> {
@@ -78,53 +76,53 @@ impl SocketWrapper {
 
         socket.set_nonblocking(true)?;
 
-        Ok(Self { socket })
+        Ok(Self { 0: socket})
     }
 
     fn connect(&self, ip: Ipv4Addr) -> io::Result<()> {
         let address = SocketAddr::new(IpAddr::V4(ip), 0);
 
-        self.socket.connect(&address.into())
+        self.0.connect(&address.into())
     }
     
     fn bind(&self, socket_addr: SocketAddr) -> io::Result<()> {
-        self.socket.bind(&socket_addr.into())
+        self.0.bind(&socket_addr.into())
     }
     
     fn local_addr(&self) -> io::Result<SockAddr> {
-        self.socket.local_addr()
+        self.0.local_addr()
     }
 
     fn send(&self, buf: &[u8]) -> io::Result<usize> {
-        self.socket.send(buf)
+        self.0.send(buf)
     }
 
     fn send_to(&self, buf: &[u8], socket_addr: SocketAddr) -> io::Result<usize> {
-        let result = self.socket.send_to(buf, &socket_addr.into());
+        let result = self.0.send_to(buf, &socket_addr.into());
         result
     }
 
     fn recv(&self, buf: &mut [u8]) -> io::Result<usize> {
-        let result = (&self.socket).read(buf);
+        let result = (&self.0).read(buf);
         result
     }
 
     fn set_ttl(&self, ttl: u32) -> io::Result<()> {
-        self.socket.set_ttl(ttl)
+        self.0.set_ttl(ttl)
     }
     
     fn set_header_included(&self, flag: bool) -> io::Result<()> {
-        self.socket.set_header_included(flag)
+        self.0.set_header_included(flag)
     }
     
     fn shutdown(&self, how: Shutdown) -> io::Result<()> {
-        self.socket.shutdown(how)
+        self.0.shutdown(how)
     }
 }
 
 impl AsRawFd for SocketWrapper {
     fn as_raw_fd(&self) -> RawFd {
-        self.socket.as_raw_fd()
+        self.0.as_raw_fd()
     }
 }
 
